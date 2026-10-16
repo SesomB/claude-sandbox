@@ -1,0 +1,60 @@
+#!/usr/sbin/nft -f
+# Hermes air-gap firewall — rendered by scripts/hermes-airgap/lib.sh
+# (hermes_render_nft) into /etc/hermes/hermes.nft and loaded by
+# hermes-firewall.service. Do not edit the rendered file by hand: edit
+# /etc/hermes/users.conf or /etc/hermes/egress.conf and run
+#   hermes-airgap-firewall reload
+#
+# 1. Backend isolation: a new TCP connection to a user's backend port on
+#    127.0.0.1 is only allowed from a socket owned by that same user. With
+#    an SSH local forward, the sshd child that opens the connection runs as
+#    the logged-in user, so this also covers tunnelled traffic.
+# 2. Egress control (defence in depth inside the air gap): sockets owned by
+#    Hermes users may reach loopback, the allow-listed destinations in
+#    /etc/hermes/egress.conf (LLM endpoint, mirrors, DNS) and nothing else.
+#    EGRESS_ACTION is "reject" (enforce) or "accept" (log only).
+
+table inet hermes
+delete table inet hermes
+
+table inet hermes {
+	# "<port> . <uid>" pairs: who owns which backend port.
+	set port_owner {
+		typeof tcp dport . meta skuid
+		@@PORT_OWNER_ELEMENTS@@
+	}
+
+	# UIDs of all Hermes users (egress control applies to these).
+	set hermes_uids {
+		typeof meta skuid
+		@@HERMES_UID_ELEMENTS@@
+	}
+
+	set egress_v4 {
+		type ipv4_addr
+		flags interval
+		@@EGRESS_V4_ELEMENTS@@
+	}
+
+	set egress_v6 {
+		type ipv6_addr
+		flags interval
+		@@EGRESS_V6_ELEMENTS@@
+	}
+
+	chain output {
+		type filter hook output priority filter; policy accept;
+
+		# --- 1. backend port isolation -------------------------------
+		ct state new ip daddr 127.0.0.1 tcp dport @@PORT_RANGE@@ tcp dport . meta skuid != @port_owner \
+			counter log prefix "hermes-port-deny: " level warn reject with tcp reset
+
+		# --- 2. egress allow-list for Hermes users -------------------
+		meta skuid != @hermes_uids accept
+		oif "lo" accept
+		ct state established,related accept
+		ip daddr @egress_v4 accept
+		ip6 daddr @egress_v6 accept
+		counter log prefix "hermes-egress: " level warn @@EGRESS_ACTION@@
+	}
+}
