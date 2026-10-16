@@ -72,7 +72,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/hermes-bundle.XXXXXX")
 [[ $KEEP_WORK == 1 ]] || trap 'rm -rf "$WORK"' EXIT
 NAME="hermes-airgap-server-$REF"
 STAGE="$WORK/$NAME"
-mkdir -p "$STAGE/artifacts" "$STAGE/tools"
+mkdir -p "$STAGE/artifacts"
 
 # --- 1. source -----------------------------------------------------------
 log "cloning $REPO_URL at $REF"

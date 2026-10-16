@@ -87,6 +87,7 @@ fi
 if grep -q "PermitOpen 127.0.0.1:$PORT" "$SSHD_DROPIN" 2>/dev/null; then pass "sshd limits $USER_NAME to forwarding 127.0.0.1:$PORT"; else fail "no PermitOpen for $USER_NAME in $SSHD_DROPIN"; fi
 
 echo "== Egress"
+# shellcheck disable=SC1090
 . "$FIREWALL_CONF" 2>/dev/null
 if [[ ${EGRESS_MODE:-enforce} == enforce ]]; then
     # 192.0.2.1 is TEST-NET-1: never routable, never in the allow-list.

@@ -19,7 +19,7 @@ require_root
 if have_systemd; then
     systemctl disable --now "hermes-serve@$USER_NAME" 2>/dev/null || true
 fi
-sed -i -E "/^$USER_NAME[[:space:]]/d" "$USERS_CONF"
+sed -i -E "/^${USER_NAME}[[:space:]]/d" "$USERS_CONF"
 rm -f "$HERMES_ETC/users/$USER_NAME.env"
 render_sshd_dropin
 apply_nft

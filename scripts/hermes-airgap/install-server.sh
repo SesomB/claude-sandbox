@@ -81,8 +81,8 @@ require_root
 restart_backends() {
     [[ $NO_RESTART == 1 ]] && { log "not restarting backends (--no-restart)"; return; }
     have_systemd || return 0
-    local user port
-    while read -r user port _; do
+    local user
+    while read -r user _; do
         log "restarting hermes-serve@$user"
         systemctl restart "hermes-serve@$user" || warn "hermes-serve@$user failed to restart; see journalctl -u hermes-serve@$user"
     done < <(users_list)
@@ -300,5 +300,5 @@ Next steps:
   1. hermes-preflight                     # check LLM endpoint + context length
   2. hermes-add-user alice --pubkey /path/to/alice.pub
   3. hermes-smoke-test alice
-Installed releases: $(ls -1 "$HERMES_PREFIX" | grep -v '^current$' | tr '\n' ' ')
+Installed releases: $(find "$HERMES_PREFIX" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f ')
 EOF
