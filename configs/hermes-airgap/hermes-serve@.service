@@ -1,0 +1,46 @@
+# Hermes Agent backend for one Linux user, reached by Hermes Desktop through
+# an SSH tunnel. Instance name = user name:  systemctl enable --now hermes-serve@alice
+#
+# /etc/hermes/users/<user>.env (root:root 0600) holds:
+#   HERMES_PORT=9121
+#   HERMES_DASHBOARD_SESSION_TOKEN=...   (Desktop's "remote token")
+# The token is passed through the process environment on purpose: Hermes
+# never lets ~/.hermes/.env override an inherited session token.
+
+[Unit]
+Description=Hermes Agent backend for %i
+Documentation=file:///usr/local/lib/hermes-airgap/README.md
+After=network-online.target hermes-firewall.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+EnvironmentFile=/etc/hermes/users/%i.env
+Environment=HOME=/home/%i
+Environment=HERMES_HOME=/home/%i/.hermes
+Environment=HERMES_DISABLE_LAZY_INSTALLS=1
+WorkingDirectory=/home/%i/work
+ExecStart=/usr/local/bin/hermes serve --host 127.0.0.1 --port ${HERMES_PORT}
+Restart=on-failure
+RestartSec=5
+# serve exits 78 on a port/host conflict with an already-running backend.
+RestartPreventExitStatus=78
+
+# Hardening. The agent's terminal tool runs inside this sandbox too:
+# it can write to the user's home (and /tmp), nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/%i
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

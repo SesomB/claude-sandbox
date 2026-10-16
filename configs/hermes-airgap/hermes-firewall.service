@@ -1,0 +1,15 @@
+# Loads the Hermes backend-isolation + egress rules (inet table "hermes").
+# Rendered by: hermes-firewall reload
+[Unit]
+Description=Hermes air-gap firewall rules
+After=nftables.service
+ConditionPathExists=/etc/hermes/hermes.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hermes/hermes.nft
+ExecStop=/usr/sbin/nft delete table inet hermes
+
+[Install]
+WantedBy=multi-user.target

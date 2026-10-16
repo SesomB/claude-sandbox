@@ -1,0 +1,92 @@
+# Hermes Agent config for an air-gapped server, rendered by add-user.sh into
+# ~<user>/.hermes/config.yaml. Key names were checked against
+# hermes_cli/config_defaults.py at v0.22.2. See docs/hermes-airgap/upstream-notes.md.
+#
+# Goal: the agent talks only to the internal LLM endpoint and uses only
+# local terminal/file/memory/skills tools. Everything that defaults to a
+# cloud service is switched off explicitly.
+
+model:
+  provider: custom                     # any OpenAI-compatible /v1 endpoint
+  base_url: "@@LLM_BASE_URL@@"
+  default: "@@LLM_MODEL@@"
+  key_env: HERMES_LLM_API_KEY          # read from ~/.hermes/.env; empty -> "no-key-required"
+  context_length: @@CONTEXT_LENGTH@@   # explicit, so no model-metadata probing (>= 65536 required)
+
+# Every auxiliary task uses the main (internal) model. Unset tasks would fall
+# back to OpenRouter.
+auxiliary:
+  vision: {provider: main}
+  compression: {provider: main}
+  skills_hub: {provider: main}
+  approval: {provider: main}
+  review: {provider: main}
+  mcp: {provider: main}
+  title_generation: {provider: main}
+  memory_query_rewrite: {provider: main}
+  tts_audio_tags: {provider: main}
+  voice_chat: {provider: main}
+  triage_specifier: {provider: main}
+  kanban_decomposer: {provider: main}
+  profile_describer: {provider: main}
+  goal_judge: {provider: main}
+  curator: {provider: main}
+  monitor: {provider: main}
+  background_review: {provider: main}
+  moa_reference: {provider: main}
+  moa_aggregator: {provider: main}
+
+agent:
+  # Toolsets that need the internet or local media models. Kept: terminal,
+  # file, memory, skills, todo, session_search, clarify, code_execution,
+  # delegation, cronjob, ...
+  disabled_toolsets:
+    - web
+    - search
+    - x_search
+    - browser
+    - computer_use
+    - vision
+    - image_gen
+    - video
+    - video_gen
+    - tts
+
+terminal:
+  backend: local                       # commands run on this server as this user
+  cwd: "@@WORKDIR@@"                   # absolute path; "." would mean the service's cwd
+
+web:
+  keyless_fallback: false              # no free-tier Exa/Parallel/Firecrawl rotation
+  keyless_rescue: false
+
+browser:
+  backend: "off"
+
+stt:
+  enabled: false                       # local faster-whisper would download a model
+
+updates:
+  check: false                         # no GitHub release checks
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+
+security:
+  allow_lazy_installs: false           # never pip/npm-install on demand
+
+auth:
+  adopt_external_logins: false         # don't pick up Codex / Claude Code logins
+
+model_catalog:
+  enabled: false                       # no remote model catalog for the picker
+
+tools:
+  connectors:
+    enabled: false
+
+nous:
+  guest: false                         # no Nous free tier
+  keepalive_interval_seconds: 0        # no Nous Portal keepalive thread

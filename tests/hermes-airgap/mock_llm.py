@@ -60,6 +60,12 @@ def pick_terminal_tool(tools):
                 "command",
             )
         return name, {arg: COMMAND}
+    # No shell tool (e.g. preflight's probe): call the first tool with
+    # placeholder arguments derived from its JSON schema.
+    for fn in by_name.values():
+        props = (fn.get("parameters") or {}).get("properties") or {}
+        sample = {"integer": 2, "number": 2, "boolean": True, "array": [], "object": {}}
+        return fn["name"], {k: sample.get(v.get("type"), "test") for k, v in props.items()}
     return None
 
 
