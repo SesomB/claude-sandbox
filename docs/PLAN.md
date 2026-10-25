@@ -1,4 +1,4 @@
-# Software Development Harness — Plan (draft v2)
+# Software Development Harness — Plan (draft v3)
 
 A Python, provider-agnostic engine that turns a product idea into working
 software through a **ticket-driven, waterfall pipeline** run by small,
@@ -27,9 +27,10 @@ escalated, and every escalation arrives as a ready-to-decide set of options.
 |-----------|-------------------------------------------------------|
 | Engine language | Python 3.12+, asyncio                           |
 | Generated apps | **Any language** via pluggable Stack Profiles (§11); Python and C++ first |
-| Models    | Provider-agnostic `ModelClient`; different models per role allowed |
+| Models    | Provider-agnostic `ModelClient`; provider and model per role set in config (§12) |
 | Process   | Waterfall phases with gates, ticket-based execution   |
-| Execution | `Executor` interface; per-ticket git worktree as the first backend |
+| Execution | Runs on your machine with your installed toolchains; per-ticket git worktree |
+| Repos     | Each generated application has its own git repository |
 | Limits    | No cost budget, no cap on parallel agents (only provider rate limits apply, §4) |
 | Learning  | Lessons apply automatically; visible and revocable on the dashboard |
 | Dashboard | Local web dashboard only, no external notifications   |
@@ -303,6 +304,51 @@ conventions: docs/conventions/cpp.md
 - **Python details:** `pyproject.toml` dependencies and package `__init__.py`
   exports are shared files, changed through `add_dependency` / `export_symbol`.
 
+## 12. Projects & configuration
+
+Each application is its **own git repository**. The harness is installed once on
+your machine and pointed at a repo; all of its state lives inside that repo:
+
+```
+my-app/                      # the application's own repo
+  .harness/
+    config.yaml              # project config (committed)
+    board.db                 # tickets, events, leases, decisions, lessons (gitignored)
+    worktrees/T-042/         # per-ticket worktrees (gitignored)
+    logs/                    # JSONL event + model-call logs (gitignored)
+  docs/spec.md               # approved spec (committed)
+  docs/architecture.md       # approved architecture + contracts (committed)
+  src/ ...
+```
+
+`harness init` creates `.harness/` in a repo (running `git init` first if needed).
+
+Models are fully configurable: providers are declared once, and each role picks a
+provider + model. Config is merged from `~/.config/harness/config.yaml` (personal
+defaults, API key env var names) and the project's `.harness/config.yaml`.
+
+```yaml
+providers:
+  anthropic: {type: anthropic, api_key_env: ANTHROPIC_API_KEY}
+  openai:    {type: openai_compatible, base_url: https://api.openai.com/v1, api_key_env: OPENAI_API_KEY}
+  local:     {type: openai_compatible, base_url: http://localhost:11434/v1}
+
+models:
+  default: {provider: anthropic, model: claude-opus-5-5}
+  roles:
+    implementer: {provider: anthropic, model: claude-sonnet-5-5}
+    fixer:       {provider: anthropic, model: claude-sonnet-5-5}
+    librarian:   {provider: local, model: qwen3-coder, max_tokens: 4096}
+
+context_budget_tokens:
+  implementer: 12000
+  reviewer: 16000
+
+stacks: [python, cpp-cmake]   # optional; auto-detected otherwise
+```
+
+API keys are never written to config; only the name of the environment variable is.
+
 ---
 
 ## Architecture
@@ -342,7 +388,8 @@ tests/
 
 ## Milestones
 
-- **M0 – Foundations:** package, CI, `ModelClient` + fake model, `Executor` + worktree,
+- **M0 – Foundations:** package, CI, config loading + role→model resolution,
+  `ModelClient` + fake model, `Executor` + worktree manager, `harness init`,
   SQLite board with atomic claim + leases (with concurrency tests), Stack Profile
   loader with `python` and `cpp-cmake` profiles.
 - **M1 – Build loop:** event bus + hooks; Implementer → gates → Reviewer → Fixer with
@@ -353,7 +400,7 @@ tests/
 - **M3 – Board:** decision requests + Researcher, local web dashboard + CLI, usage tracking.
 - **M4 – Learning:** lesson store with auto-apply, injection into context packs,
   Librarian, skill promotion, revoke/edit on the dashboard.
-- **M5 – Hardening:** Docker executor, integration/QA phase, more providers,
+- **M5 – Hardening:** integration/QA phase, more providers, optional Docker executor,
   Toolchain agent for new languages.
 
 M1 is first on purpose: the build loop is the core of the system, and it can be
@@ -361,9 +408,4 @@ tested with hand-written tickets before the spec/decomposition agents exist.
 
 ## Open questions
 
-1. Which model provider(s) and models per role (e.g. strongest model for Spec/Architect/
-   Reviewer, a faster one for Implementers)?
-2. Where do the generated apps live: one new git repo per project on this machine,
-   optionally pushed to GitHub?
-3. Is the harness run on your own machine (where Python and C++ toolchains exist), or
-   should M0 already include Docker images for the toolchains?
+None blocking M0.
