@@ -18,10 +18,55 @@ class GitError(RuntimeError):
 
 def git(repo: Path, *args: str) -> str:
     """Run a git command in ``repo`` and return stdout; raise GitError on failure."""
-    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    proc = git_run(repo, *args)
     if proc.returncode != 0:
-        raise GitError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+        raise GitError(f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout).strip()}")
     return proc.stdout
+
+
+def git_run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run a git command and return the completed process, without raising."""
+    return subprocess.run(
+        ["git", *_identity(repo), *args], cwd=repo, capture_output=True, text=True
+    )
+
+
+def _identity(repo: Path) -> list[str]:
+    """A fallback committer identity when the user has none configured."""
+    proc = subprocess.run(["git", "config", "user.email"], cwd=repo, capture_output=True, text=True)
+    if proc.stdout.strip():
+        return []
+    return ["-c", "user.name=harness", "-c", "user.email=harness@localhost"]
+
+
+def changed_files(repo: Path) -> list[str]:
+    """Paths with uncommitted changes (incl. untracked and deleted), repo-relative."""
+    out = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    entries = out.split("\0")
+    paths: list[str] = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if not entry:
+            continue
+        status, path = entry[:2], entry[3:]
+        paths.append(path)
+        if "R" in status or "C" in status:  # rename/copy: next entry is the source path
+            paths.append(entries[i])
+            i += 1
+    return sorted(set(paths))
+
+
+def commit_paths(repo: Path, paths: list[str], message: str) -> str | None:
+    """Stage exactly ``paths`` (incl. deletions) and commit; returns the sha or None."""
+    if not paths:
+        return None
+    git(repo, "add", "-A", "--", *paths)
+    if not git(repo, "diff", "--cached", "--name-only").strip():
+        return None
+    git(repo, "commit", "-q", "-m", message)
+    return git(repo, "rev-parse", "HEAD").strip()
 
 
 @dataclass(frozen=True)

@@ -50,6 +50,16 @@ CREATE TABLE IF NOT EXISTS file_ownership (
     path      TEXT PRIMARY KEY,
     ticket_id TEXT NOT NULL REFERENCES tickets(id)
 );
+CREATE TABLE IF NOT EXISTS shared_edits (
+    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id),
+    path      TEXT NOT NULL,
+    op        TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     seq       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts        REAL NOT NULL,
@@ -364,6 +374,41 @@ class Board:
             if self._deps_done(conn, row["id"]):
                 self._set_status(conn, row["id"], S.WAITING, S.READY, unblocked_by=ticket_id)
 
+    # -- side records ---------------------------------------------------------------------
+
+    def log_event(self, ticket_id: str | None, type: str, **payload: Any) -> None:
+        """Append a non-state-change event (gate results, TDD steps, ...) to the log."""
+        with self._tx() as conn:
+            self._emit(conn, ticket_id, type, **payload)
+
+    def record_shared_edit(self, ticket_id: str, path: str, op: dict[str, Any]) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO shared_edits (ticket_id, path, op) VALUES (?, ?, ?)",
+                (ticket_id, path, json.dumps(op, sort_keys=True)),
+            )
+
+    def shared_edits(self, ticket_id: str) -> list[tuple[str, dict[str, Any]]]:
+        """The ticket's shared-file edits, in the order they were made."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT path, op FROM shared_edits WHERE ticket_id=? ORDER BY seq", (ticket_id,)
+            ).fetchall()
+        return [(r["path"], json.loads(r["op"])) for r in rows]
+
+    def get_meta(self, key: str, default: str | None = None) -> str | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return default if row is None else str(row[0])
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
     # -- queries ------------------------------------------------------------------------
 
     def get(self, ticket_id: str) -> Ticket:
@@ -390,6 +435,36 @@ class Board:
                 "SELECT ticket_id FROM file_ownership WHERE path=?", (path,)
             ).fetchone()
         return None if row is None else str(row[0])
+
+    def last_event(self, ticket_id: str, type: str) -> Event | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM events WHERE ticket_id=? AND type=? ORDER BY seq DESC LIMIT 1",
+                (ticket_id, type),
+            ).fetchone()
+        if row is None:
+            return None
+        return Event(
+            row["seq"], row["ts"], row["ticket_id"], row["type"], json.loads(row["payload"])
+        )
+
+    def count_events(self, ticket_id: str, type: str, **payload_match: Any) -> int:
+        events = [
+            e
+            for e in self.events_for(ticket_id)
+            if e.type == type and all(e.payload.get(k) == v for k, v in payload_match.items())
+        ]
+        return len(events)
+
+    def events_for(self, ticket_id: str) -> list[Event]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM events WHERE ticket_id=? ORDER BY seq", (ticket_id,)
+            ).fetchall()
+        return [
+            Event(r["seq"], r["ts"], r["ticket_id"], r["type"], json.loads(r["payload"]))
+            for r in rows
+        ]
 
     def events(self, after_seq: int = 0, limit: int = 1000) -> list[Event]:
         with closing(self._connect()) as conn:

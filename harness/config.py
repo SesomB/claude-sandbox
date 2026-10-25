@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -30,13 +30,16 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None
 
 
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+
+
 class RoleModel(BaseModel):
     """Which provider and model a role uses, plus generation settings."""
 
     provider: str
     model: str
-    max_tokens: int = 8192
-    temperature: float | None = None
+    max_tokens: int = 32_000
+    effort: Effort | None = None
 
 
 class ModelsConfig(BaseModel):
@@ -44,11 +47,21 @@ class ModelsConfig(BaseModel):
     roles: dict[str, RoleModel] = Field(default_factory=dict)
 
 
+class OrchestratorConfig(BaseModel):
+    max_review_rounds: int = 3  # changes_requested rounds before escalating
+    max_gate_attempts: int = 4  # failed `finish` gate runs per agent before escalating
+    max_merge_failures: int = 3
+    agent_max_turns: int = 80
+    lease_s: float = 900.0
+    max_parallel_agents: int | None = None  # None = no cap
+
+
 class HarnessConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     context_budget_tokens: dict[str, int] = Field(default_factory=dict)
     stacks: list[str] | None = None
+    orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
 
     @model_validator(mode="after")
     def _check_providers_exist(self) -> HarnessConfig:

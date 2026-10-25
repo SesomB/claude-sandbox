@@ -14,3 +14,4 @@ contracts: libclang
 source_globs: ["**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.hpp", "**/*.h"]
 test_globs: ["tests/**/*.cpp", "**/*_test.cpp", "**/test_*.cpp"]
 shared_files: ["**/CMakeLists.txt", "**/*.cmake", vcpkg.json, conanfile.txt, conanfile.py]
+artifact_globs: [build/**, .cache/**]

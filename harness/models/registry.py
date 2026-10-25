@@ -10,8 +10,16 @@ from harness.models.fake import FakeModelClient
 
 ClientFactory = Callable[[ProviderConfig, RoleModel], ModelClient]
 
+
+def _anthropic(provider: ProviderConfig, role_model: RoleModel) -> ModelClient:
+    from harness.models.anthropic import AnthropicClient  # import the SDK only when used
+
+    return AnthropicClient(provider, role_model)
+
+
 _FACTORIES: dict[str, ClientFactory] = {
     "fake": lambda provider, role_model: FakeModelClient(),
+    "anthropic": _anthropic,
 }
 
 

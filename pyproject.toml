@@ -5,6 +5,7 @@ description = "Spec-driven, ticket-based multi-agent software development harnes
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=2.3.0",
     "pydantic>=2.7",
     "pyyaml>=6.0",
 ]
@@ -35,6 +36,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["UP046", "UP047"]  # keep TypeVar generics readable
 
 [tool.mypy]
 python_version = "3.12"

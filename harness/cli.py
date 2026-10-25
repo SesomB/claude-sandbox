@@ -84,6 +84,23 @@ def _cmd_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from harness.core.orchestrator import Orchestrator
+
+    project = Project.open(Path(args.project))
+    summary = asyncio.run(
+        Orchestrator(project).run(until_idle=not args.watch, timeout_s=args.timeout)
+    )
+    counts = ", ".join(f"{k}={v}" for k, v in sorted(summary.by_status.items()))
+    print(f"{summary.agent_runs} agent runs in {summary.seconds:.0f}s. Tickets: {counts or 'none'}")
+    escalated = project.board.tickets(TicketStatus.ESCALATED)
+    for t in escalated:
+        print(f"  escalated: {t.id} {t.title}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness", description=__doc__)
     parser.add_argument("-C", "--project", default=".", help="project directory (default: .)")
@@ -115,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", choices=[s.value for s in TicketStatus])
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_board)
+
+    p = sub.add_parser("run", help="run the build loop until no work is left")
+    p.add_argument("--watch", action="store_true", help="keep running and wait for new work")
+    p.add_argument("--timeout", type=float, default=None, help="stop after this many seconds")
+    p.set_defaults(func=_cmd_run)
 
     p = sub.add_parser("events", help="show the event log")
     p.add_argument("--after", type=int, default=0)

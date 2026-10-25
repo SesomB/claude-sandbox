@@ -1,4 +1,4 @@
-# Software Development Harness — Plan (draft v3)
+# Software Development Harness — Plan (draft v4)
 
 A Python, provider-agnostic engine that turns a product idea into working
 software through a **ticket-driven, waterfall pipeline** run by small,
@@ -132,10 +132,11 @@ A ticket becomes `ready` only when all `depends_on` tickets are `done`.
   The only throttle is the model provider's rate limit: the scheduler backs off
   on rate-limit errors and resumes automatically. Token usage and cost are tracked
   and shown, but never limit the work.
-- **Merging into `main`:** the merge queue takes each approved ticket, rebases it on
-  `main`, runs the full gates on the combined result, and fast-forwards `main`.
-  If `main` ever goes red after a merge, the harness reverts that merge automatically,
-  reopens the ticket with the failure attached, and continues.
+- **Merging into `main`:** the merge queue takes one approved ticket at a time, merges
+  it with the latest `main` in a dedicated merge worktree, and runs the full gates on
+  that exact merged commit. Only if they pass does `main` move to it (fast-forwarding
+  your checkout if it is on `main`). So `main` never goes red: a failing merge never
+  lands, and the ticket goes back to a Fixer with the failure attached.
 - **Dashboard:** a local web UI (FastAPI + a simple frontend) showing a kanban of
   tickets, the live event feed, token/cost usage, the **Decisions** inbox, and the
   **Lessons** list. No external notifications. A CLI (`harness board`) shows the same data.

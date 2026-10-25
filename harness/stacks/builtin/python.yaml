@@ -13,3 +13,7 @@ contracts: python-ast
 source_globs: ["**/*.py"]
 test_globs: ["tests/**/test_*.py", "**/test_*.py", "**/*_test.py"]
 shared_files: [pyproject.toml, uv.lock, requirements*.txt, "**/__init__.py", conftest.py]
+artifact_globs: ["**/__pycache__/**", "**/*.pyc", .pytest_cache/**, .mypy_cache/**, .ruff_cache/**, .venv/**, .coverage, coverage.json, "**/*.egg-info/**"]
+test_failed_exit_codes: [1]  # pytest: 1 = tests failed; 2-5 = errors / nothing collected
+# Agents rewrite files within the same second; stale .pyc files would hide their changes.
+env: {PYTHONDONTWRITEBYTECODE: "1"}

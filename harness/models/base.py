@@ -30,7 +30,20 @@ class ToolResultBlock(BaseModel):
     is_error: bool = False
 
 
-ContentBlock = Annotated[TextBlock | ToolUseBlock | ToolResultBlock, Field(discriminator="type")]
+class OpaqueBlock(BaseModel):
+    """A provider-specific block (e.g. a thinking block) carried through unchanged.
+
+    Adapters must send these back exactly as received; other providers drop them.
+    """
+
+    type: Literal["opaque"] = "opaque"
+    provider: str
+    data: dict[str, Any]
+
+
+ContentBlock = Annotated[
+    TextBlock | ToolUseBlock | ToolResultBlock | OpaqueBlock, Field(discriminator="type")
+]
 
 
 class Message(BaseModel):
@@ -57,9 +70,21 @@ class ToolSpec(BaseModel):
 class Usage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_input_tokens=self.cache_read_input_tokens + other.cache_read_input_tokens,
+            cache_creation_input_tokens=(
+                self.cache_creation_input_tokens + other.cache_creation_input_tokens
+            ),
+        )
 
 
-StopReason = Literal["end_turn", "tool_use", "max_tokens", "stop_sequence", "other"]
+StopReason = Literal["end_turn", "tool_use", "max_tokens", "stop_sequence", "refusal", "other"]
 
 
 class ModelResponse(BaseModel):

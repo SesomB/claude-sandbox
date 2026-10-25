@@ -93,3 +93,22 @@ async def test_cpp_profile_red_then_green(tmp_path: Path) -> None:
     assert build is not None and build.ok
     green = await cpp.run("test", ex)
     assert green is not None and green.ok, green.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "pattern", "expected"),
+    [
+        ("tests/test_calc.py", "tests/**/test_*.py", True),
+        ("tests/unit/deep/test_x.py", "tests/**/test_*.py", True),
+        ("src/tests/test_x.py", "tests/**/test_*.py", False),
+        ("CMakeLists.txt", "**/CMakeLists.txt", True),
+        ("a/b/CMakeLists.txt", "**/CMakeLists.txt", True),
+        ("build/x/y.o", "build/**", True),
+        ("src/a.py", "*.py", False),  # * stays within one segment
+        ("requirements-dev.txt", "requirements*.txt", True),
+    ],
+)
+def test_match_glob(path: str, pattern: str, expected: bool) -> None:
+    from harness.stacks.profile import match_glob
+
+    assert match_glob(path, pattern) is expected

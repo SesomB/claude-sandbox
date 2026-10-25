@@ -70,15 +70,6 @@ def _has_commits(path: Path) -> bool:
     return proc.returncode == 0
 
 
-def _commit(repo: Path, message: str) -> None:
-    identity: list[str] = []
-    if not subprocess.run(
-        ["git", "config", "user.email"], cwd=repo, capture_output=True, text=True
-    ).stdout.strip():
-        identity = ["-c", "user.name=harness", "-c", "user.email=harness@localhost"]
-    git(repo, *identity, "commit", "-q", "-m", message)
-
-
 @dataclass
 class Project:
     root: Path
@@ -124,5 +115,5 @@ def init_project(path: Path, *, user_config: Path | None = None) -> Project:
     if created:
         git(path, "add", *created)
         if not _has_commits(path) or git(path, "diff", "--cached", "--name-only").strip():
-            _commit(path, "Initialize harness project")
+            git(path, "commit", "-q", "-m", "Initialize harness project")
     return Project.open(path, user_config=user_config)

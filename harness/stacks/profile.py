@@ -6,8 +6,9 @@ language; the project's profile decides what command each step runs.
 
 from __future__ import annotations
 
+import functools
+import re
 import shlex
-from fnmatch import fnmatch
 from importlib import resources
 from pathlib import Path
 from typing import Literal
@@ -34,9 +35,33 @@ class StackError(Exception):
     pass
 
 
+@functools.cache
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a path glob: ``**/`` = zero or more dirs, ``**`` = anything,
+    ``*`` / ``?`` = within one path segment."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
 def match_glob(path: str, pattern: str) -> bool:
-    """fnmatch where a leading ``**/`` also matches files at the repo root."""
-    return fnmatch(path, pattern) or (pattern.startswith("**/") and fnmatch(path, pattern[3:]))
+    """Whether a repo-relative POSIX path matches a glob like ``src/**/*.py``."""
+    return _glob_regex(pattern).match(path) is not None
 
 
 class StackProfile(BaseModel):
@@ -58,7 +83,12 @@ class StackProfile(BaseModel):
     source_globs: list[str] = Field(default_factory=list)
     test_globs: list[str] = Field(default_factory=list)
     shared_files: list[str] = Field(default_factory=list)
+    artifact_globs: list[str] = Field(default_factory=list)  # build outputs, caches
+    # Exit codes of `test_one` that mean "tests ran and failed" (empty: any non-zero).
+    # Used to tell a genuine red test from a crash or a missing test.
+    test_failed_exit_codes: list[int] = Field(default_factory=list)
     conventions: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)  # extra env for every step
 
     def command(
         self, step: Step, *, files: list[str] | None = None, test_id: str | None = None
@@ -84,6 +114,14 @@ class StackProfile(BaseModel):
     def is_test_file(self, path: str) -> bool:
         return any(match_glob(path, p) for p in self.test_globs)
 
+    def is_artifact(self, path: str) -> bool:
+        return any(match_glob(path, p) for p in self.artifact_globs)
+
+    def is_test_failure(self, exit_code: int) -> bool:
+        if exit_code == 0:
+            return False
+        return not self.test_failed_exit_codes or exit_code in self.test_failed_exit_codes
+
     async def run(
         self,
         step: Step,
@@ -97,7 +135,7 @@ class StackProfile(BaseModel):
         cmd = self.command(step, files=files, test_id=test_id)
         if cmd is None:
             return None
-        return await executor.run(cmd, timeout_s=timeout_s)
+        return await executor.run(cmd, timeout_s=timeout_s, env=self.env or None)
 
 
 def _parse(text: str, source: str) -> StackProfile:

@@ -8,20 +8,30 @@ options and pros/cons. See [`docs/PLAN.md`](docs/PLAN.md) for the full design.
 
 ## Status
 
-**M0 – Foundations** (done):
+**M0 – Foundations** (done): config with a model per role, provider-neutral model layer,
+confined executor + per-ticket git worktrees, SQLite ticket board (atomic claims,
+leases, file ownership, dependencies, escalation, event log), language-agnostic Stack
+Profiles (`python`, `cpp-cmake`), CLI.
 
-- `harness.config`: user + project config, provider and model per role
-- `harness.models`: provider-neutral message/tool types, `ModelClient` protocol,
-  `FakeModelClient` for offline tests, provider registry
-- `harness.executors`: `LocalExecutor` (confined to a root dir, timeouts kill the
-  whole process group) and `WorktreeManager` (one git worktree + branch per ticket)
-- `harness.board`: SQLite ticket board with atomic claims, leases, file ownership,
-  dependency unblocking, escalations, and an event log
-- `harness.stacks`: language-agnostic Stack Profiles; built-in `python` and `cpp-cmake`
-- `harness` CLI: `init`, `config`, `stacks`, `ticket add|queue`, `board`, `events`
+**M1 – Build loop** (done):
 
-Next: **M1 – the build loop** (agent tool loop, hooks, implement → review → fix with
-red→green verification, merge queue).
+- `harness.models.anthropic`: Claude adapter (streaming, prompt caching, effort,
+  server-side refusal fallbacks, thinking blocks passed back unchanged)
+- `harness.agents.loop`: the tool-use loop; agents end by calling a structured `finish`
+  that the harness validates (e.g. by running the gates), with retries and backoff
+- `harness.tools`: scoped tools (read/write/edit only in the ticket's scope, shared
+  files only via replayable `edit_shared_file`, tests, lint, typecheck)
+- `harness.gates`: scope, required tests, configure/build/typecheck/lint/test per stack,
+  auto-formatting, and **red→green TDD enforcement** for every bug finding
+- `harness.context`: minimal context packs (only the referenced spec sections,
+  contracts, files in scope, conventions, lessons) with a token budget
+- `harness.core`: event-driven orchestrator with hooks
+  (ready → Implementer, awaiting_review → Reviewer, changes_requested → Fixer,
+  approved → merge queue), heartbeats, crash recovery, and a merge queue that gates
+  the exact merged commit before `main` moves
+- `harness run`: run the build loop until no work is left
+
+Next: **M2 – upstream phases** (Spec Writer/Critic, Architect, Decomposer + ticket linter).
 
 ## Development
 
@@ -47,4 +57,6 @@ cat > tickets.yaml <<'YAML'
 YAML
 uv run --project <path-to-this-repo> harness ticket add tickets.yaml --queue
 uv run --project <path-to-this-repo> harness board
+export ANTHROPIC_API_KEY=...   # or configure another provider in .harness/config.yaml
+uv run --project <path-to-this-repo> harness run
 ```

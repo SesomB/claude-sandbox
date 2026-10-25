@@ -56,7 +56,7 @@ def test_client_for_role(tmp_path: Path) -> None:
     user = write(
         tmp_path / "u.yaml",
         """
-providers: {f: {type: fake}, real: {type: anthropic}}
+providers: {f: {type: fake}, real: {type: carrier-pigeon}}
 models: {default: {provider: f, model: m}, roles: {reviewer: {provider: real, model: x}}}
 """,
     )
