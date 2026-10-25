@@ -138,7 +138,14 @@ class Pipeline:
             max_tokens=self.project.config.model_for(role).max_tokens,
             retry=self.retry,
         )
-        log_agent_run(self.project, key, role, f"{role}-{next(self._ids)}", run)
+        log_agent_run(
+            self.project,
+            key,
+            role,
+            f"{role}-{next(self._ids)}",
+            run,
+            model=self.project.config.model_for(role).model,
+        )
         return run
 
     async def _land(

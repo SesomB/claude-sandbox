@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -109,29 +110,50 @@ def _idea(args: argparse.Namespace) -> str:
     raise ValueError("describe the product idea as an argument or with --file")
 
 
-async def _run_phases(project: Project, phases: list[str], idea: str | None) -> int:
+async def _run_phases(
+    project: Project, phases: list[str], idea: str | None, args: argparse.Namespace
+) -> int:
+    import asyncio
+
     from harness.core.orchestrator import Orchestrator
     from harness.escalation.cli import CliHuman
+    from harness.escalation.decisions import BoardHuman, Human
     from harness.phases.pipeline import Pipeline
 
-    pipeline = Pipeline(project, CliHuman())
-    for phase in phases:
-        if phase == "spec":
-            assert idea is not None
-            result = await pipeline.spec(idea)
-        elif phase == "architecture":
-            result = await pipeline.architecture()
-        elif phase == "plan":
-            result = await pipeline.plan()
-        else:
-            summary = await Orchestrator(project).run()
-            counts = ", ".join(f"{k}={v}" for k, v in sorted(summary.by_status.items()))
-            print(f"Build loop finished: {counts}")
-            continue
-        print(f"[{phase}] {result.message}")
-        if not result.ok:
-            return 1
-    return 0
+    human: Human
+    server = None
+    if args.interactive:
+        human = CliHuman()
+    else:
+        url = f"http://127.0.0.1:{args.port}"
+        human = BoardHuman(project.board, where=f"the dashboard ({url})")
+        if not args.no_dashboard:
+            from harness.web.app import serve
+
+            server = asyncio.create_task(serve(project, port=args.port))
+            print(f"Dashboard: {url}")
+    try:
+        pipeline = Pipeline(project, human)
+        for phase in phases:
+            if phase == "spec":
+                assert idea is not None
+                result = await pipeline.spec(idea)
+            elif phase == "architecture":
+                result = await pipeline.architecture()
+            elif phase == "plan":
+                result = await pipeline.plan()
+            else:
+                summary = await Orchestrator(project).run(until_idle=not args.watch)
+                counts = ", ".join(f"{k}={v}" for k, v in sorted(summary.by_status.items()))
+                print(f"Build loop finished: {counts}")
+                continue
+            print(f"[{phase}] {result.message}")
+            if not result.ok:
+                return 1
+        return 0
+    finally:
+        if server is not None:
+            server.cancel()
 
 
 def _cmd_phase(args: argparse.Namespace) -> int:
@@ -150,7 +172,7 @@ def _cmd_phase(args: argparse.Namespace) -> int:
         phases = [args.phase_command]
     idea = _idea(args) if "spec" in phases else None
     try:
-        return asyncio.run(_run_phases(project, phases, idea))
+        return asyncio.run(_run_phases(project, phases, idea, args))
     except PhaseError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -164,6 +186,57 @@ def _cmd_decisions(args: argparse.Namespace) -> int:
         print(
             f"{d['id']:<6} [{d['phase'] or d['ticket_id'] or '-'}] {req['question']}  ->  {status}"
         )
+    return 0
+
+
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from harness.web.app import serve
+
+    project = Project.open(Path(args.project))
+    print(f"Dashboard: http://127.0.0.1:{args.port}  (Ctrl+C to stop)")
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(serve(project, port=args.port))
+    return 0
+
+
+def _cmd_answer(args: argparse.Namespace) -> int:
+    from harness.escalation.cli import parse_choice
+    from harness.escalation.decisions import DecisionRequest
+
+    project = Project.open(Path(args.project))
+    d = project.board.get_decision(args.id)
+    if d["answer"] is not None:
+        raise BoardError(f"{args.id} is already answered")
+    decision = parse_choice(DecisionRequest.model_validate(d["request"]), " ".join(args.answer))
+    project.board.answer_decision(args.id, decision.model_dump())
+    print(f"{args.id}: {decision.describe()}")
+    return 0
+
+
+def _cmd_approve(args: argparse.Namespace) -> int:
+    project = Project.open(Path(args.project))
+    approved = args.reject is None
+    project.board.resolve_approval(args.id, approved, args.reject or "")
+    print(f"{args.id}: {'approved' if approved else 'changes requested'}")
+    return 0
+
+
+def _cmd_usage(args: argparse.Namespace) -> int:
+    from harness.core.usage import usage_report
+
+    project = Project.open(Path(args.project))
+    report = usage_report(project.board, project.config)
+    for title, lines in (("role", report.by_role), ("ticket", report.by_ticket)):
+        print(f"{'by ' + title:<16} {'runs':>5} {'in':>10} {'out':>10} {'cost':>9}")
+        for key, u in sorted(lines.items()):
+            tokens_in = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+            print(
+                f"{key:<16} {u.runs:>5} {tokens_in:>10} {u.output_tokens:>10} ${u.cost_usd:>8.3f}"
+            )
+        print()
+    print(f"total cost: ${report.total.cost_usd:.3f} over {report.total.runs} agent runs")
     return 0
 
 
@@ -209,7 +282,40 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("idea", nargs="?", help="the product idea (spec/start)")
         p.add_argument("--file", help="read the product idea from a file")
+        p.add_argument(
+            "--interactive",
+            action="store_true",
+            help="answer questions in this terminal instead of the dashboard",
+        )
+        p.add_argument(
+            "--no-dashboard",
+            action="store_true",
+            help="don't serve the dashboard from this process",
+        )
+        p.add_argument("--port", type=int, default=8765)
+        p.add_argument(
+            "--watch",
+            action="store_true",
+            help="keep the build loop running for escalation answers",
+        )
         p.set_defaults(func=_cmd_phase, phase_command=name)
+
+    p = sub.add_parser("dashboard", help="serve the Board dashboard on localhost")
+    p.add_argument("--port", type=int, default=8765)
+    p.set_defaults(func=_cmd_dashboard)
+
+    p = sub.add_parser("answer", help="answer a decision: option number [note], or free text")
+    p.add_argument("id")
+    p.add_argument("answer", nargs="*")
+    p.set_defaults(func=_cmd_answer)
+
+    p = sub.add_parser("approve", help="approve a phase gate (or --reject with feedback)")
+    p.add_argument("id")
+    p.add_argument("--reject", metavar="FEEDBACK", help="request changes with this feedback")
+    p.set_defaults(func=_cmd_approve)
+
+    p = sub.add_parser("usage", help="token usage and cost by role and ticket")
+    p.set_defaults(func=_cmd_usage)
 
     p = sub.add_parser("decisions", help="list the Board's decisions")
     p.set_defaults(func=_cmd_decisions)

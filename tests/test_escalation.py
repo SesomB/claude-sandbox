@@ -81,8 +81,8 @@ async def test_cli_human(
     d = await human.decide("D-1", DecisionRequest.model_validate(REQ))
     assert d == Decision(choice="Plain", note="cheaper")
     assert "Hash reset tokens?" in capsys.readouterr().out
-    a1 = await human.approve("spec", "summary")
+    a1 = await human.approve("A-1", "spec", "summary")
     assert not a1.approved and a1.feedback == "add rate limits"
-    a2 = await human.approve("spec", "summary")
+    a2 = await human.approve("A-1", "spec", "summary")
     assert not a2.approved and a2.feedback == "please add logging"
-    assert (await human.approve("spec", "summary")).approved
+    assert (await human.approve("A-1", "spec", "summary")).approved

@@ -66,6 +66,16 @@ CREATE TABLE IF NOT EXISTS decisions (
     created_at  REAL NOT NULL,
     answered_at REAL
 );
+CREATE TABLE IF NOT EXISTS approvals (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          TEXT NOT NULL UNIQUE,
+    gate        TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    approved    INTEGER,
+    feedback    TEXT,
+    created_at  REAL NOT NULL,
+    answered_at REAL
+);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -366,6 +376,8 @@ class Board:
                 raise InvalidTransition(f"{ticket_id} is {current}, not escalated")
             if to_status is S.READY and not self._deps_done(conn, ticket_id):
                 to_status = S.WAITING
+            # The Board's decision starts a fresh attempt: round limits count from here.
+            conn.execute("UPDATE tickets SET review_rounds = 0 WHERE id=?", (ticket_id,))
             self._set_status(conn, ticket_id, current, to_status, **payload)
             if to_status is S.CANCELLED:
                 self._on_terminal(conn, ticket_id)
@@ -441,22 +453,92 @@ class Board:
                 answer=answer,
             )
 
+    @staticmethod
+    def _decision_row(r: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": r["id"],
+            "phase": r["phase"],
+            "ticket_id": r["ticket_id"],
+            "request": json.loads(r["request"]),
+            "answer": json.loads(r["answer"]) if r["answer"] else None,
+            "created_at": r["created_at"],
+            "answered_at": r["answered_at"],
+        }
+
     def decisions(self, *, open_only: bool = False) -> list[dict[str, Any]]:
         query = "SELECT * FROM decisions"
         if open_only:
             query += " WHERE answer IS NULL"
         with closing(self._connect()) as conn:
             rows = conn.execute(query + " ORDER BY seq").fetchall()
-        return [
-            {
-                "id": r["id"],
-                "phase": r["phase"],
-                "ticket_id": r["ticket_id"],
-                "request": json.loads(r["request"]),
-                "answer": json.loads(r["answer"]) if r["answer"] else None,
-            }
-            for r in rows
-        ]
+        return [self._decision_row(r) for r in rows]
+
+    def get_decision(self, decision_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM decisions WHERE id=?", (decision_id,)).fetchone()
+        if row is None:
+            raise BoardError(f"unknown decision {decision_id!r}")
+        return self._decision_row(row)
+
+    # -- approval gates ---------------------------------------------------------------------
+
+    def create_approval(self, gate: str, summary: str) -> str:
+        with self._tx() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM approvals").fetchone()[0] + 1
+            approval_id = f"A-{n}"
+            conn.execute(
+                "INSERT INTO approvals (id, gate, summary, created_at) VALUES (?, ?, ?, ?)",
+                (approval_id, gate, summary, self._clock()),
+            )
+            self._emit(conn, None, "approval.requested", approval=approval_id, gate=gate)
+            return approval_id
+
+    def resolve_approval(self, approval_id: str, approved: bool, feedback: str = "") -> None:
+        with self._tx() as conn:
+            cur = conn.execute(
+                "UPDATE approvals SET approved=?, feedback=?, answered_at=? "
+                "WHERE id=? AND approved IS NULL",
+                (int(approved), feedback, self._clock(), approval_id),
+            )
+            if cur.rowcount != 1:
+                raise BoardError(f"{approval_id} does not exist or is already resolved")
+            gate = conn.execute("SELECT gate FROM approvals WHERE id=?", (approval_id,)).fetchone()[
+                0
+            ]
+            self._emit(
+                conn,
+                None,
+                "phase.approved" if approved else "phase.rejected",
+                approval=approval_id,
+                gate=gate,
+                feedback=feedback,
+            )
+
+    @staticmethod
+    def _approval_row(r: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": r["id"],
+            "gate": r["gate"],
+            "summary": r["summary"],
+            "approved": None if r["approved"] is None else bool(r["approved"]),
+            "feedback": r["feedback"] or "",
+            "created_at": r["created_at"],
+        }
+
+    def approvals(self, *, open_only: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM approvals"
+        if open_only:
+            query += " WHERE approved IS NULL"
+        with closing(self._connect()) as conn:
+            rows = conn.execute(query + " ORDER BY seq").fetchall()
+        return [self._approval_row(r) for r in rows]
+
+    def get_approval(self, approval_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+        if row is None:
+            raise BoardError(f"unknown approval {approval_id!r}")
+        return self._approval_row(row)
 
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         with closing(self._connect()) as conn:

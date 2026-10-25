@@ -56,12 +56,31 @@ class OrchestratorConfig(BaseModel):
     max_parallel_agents: int | None = None  # None = no cap
 
 
+class Price(BaseModel):
+    """USD per million tokens. Cache prices default to 10% (read) / 125% (write) of input."""
+
+    input: float
+    output: float
+    cache_read: float | None = None
+    cache_write: float | None = None
+
+
+# Anthropic first-party list prices; override or extend with `pricing:` in config.
+DEFAULT_PRICING: dict[str, Price] = {
+    "claude-fable-5-1": Price(input=10.0, output=50.0, cache_read=0.25),
+    "claude-opus-5-5": Price(input=4.0, output=20.0, cache_read=0.20),
+    "claude-sonnet-5-5": Price(input=2.0, output=10.0, cache_read=0.20),
+    "claude-haiku-5-5": Price(input=0.10, output=0.50),
+}
+
+
 class HarnessConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     context_budget_tokens: dict[str, int] = Field(default_factory=dict)
     stacks: list[str] | None = None
     orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
+    pricing: dict[str, Price] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_providers_exist(self) -> HarnessConfig:
@@ -83,6 +102,9 @@ class HarnessConfig(BaseModel):
 
     def provider_for(self, role: str) -> ProviderConfig:
         return self.providers[self.model_for(role).provider]
+
+    def price_for(self, model: str) -> Price | None:
+        return self.pricing.get(model) or DEFAULT_PRICING.get(model)
 
     def context_budget(self, role: str, fallback: int = 12_000) -> int:
         return self.context_budget_tokens.get(role, fallback)

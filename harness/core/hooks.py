@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from harness.board import Event
+from harness.escalation.researcher import apply_ticket_decision
 
 if TYPE_CHECKING:
     from harness.core.orchestrator import Orchestrator
@@ -54,4 +55,15 @@ def default_hooks() -> HookRegistry:
             orch.spawn(ROLE_FOR_EVENT[event.type], event.ticket_id)
 
     registry.on(*ROLE_FOR_EVENT)(spawn_role)
+
+    async def research(event: Event, orch: Orchestrator) -> None:
+        if event.ticket_id is not None:
+            orch.spawn("researcher", event.ticket_id)
+
+    async def apply_decision(event: Event, orch: Orchestrator) -> None:
+        if event.ticket_id is not None:
+            apply_ticket_decision(orch.board, str(event.payload["decision"]))
+
+    registry.on("ticket.escalated")(research)
+    registry.on("decision.answered")(apply_decision)
     return registry

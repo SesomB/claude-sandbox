@@ -17,6 +17,7 @@ def log_agent_run(
     run: AgentRun[Any],
     *,
     ticket_id: str | None = None,
+    model: str = "",
 ) -> None:
     log_dir = project.harness_dir / "logs" / key
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -28,6 +29,7 @@ def log_agent_run(
         "agent.finished",
         role=role,
         agent=agent,
+        model=model,
         outcome=run.outcome,
         reason=run.reason,
         turns=run.turns,

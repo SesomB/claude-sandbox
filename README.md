@@ -49,7 +49,24 @@ Profiles (`python`, `cpp-cmake`), CLI.
 - CLI: `harness start "idea"` runs every remaining phase and then the build loop;
   `harness spec|architecture|plan|status|decisions`
 
-Next: **M3 – the Board dashboard** (local web UI for tickets, events, decisions, usage).
+**M3 – The Board** (done):
+
+![Board dashboard](docs/images/dashboard.png)
+
+- `harness dashboard` (or automatically with `harness start`): a local web UI at
+  http://127.0.0.1:8765 with what needs you (approvals and decisions, each option with
+  pros/cons, its action and the recommendation), the ticket board, a live activity
+  feed, ticket timelines and agent transcripts, and token usage and cost
+- One channel to the human through the board: answer on the dashboard, with
+  `harness answer D-3 2 "note"` / `harness approve A-1 [--reject "feedback"]`, or
+  interactively with `--interactive`; the waiting pipeline picks the answer up
+- Escalations come with options: a **Researcher** agent turns an escalated ticket into
+  a decision whose options each carry an action (retry, send to fixer, cancel, manual);
+  your answer is applied automatically and your note becomes guidance for the next agent
+- `harness usage`: tokens and cost by role and ticket (built-in Claude prices,
+  overridable with `pricing:` in config)
+
+Next: **M4 – learning** (lessons from your feedback and recurring review findings).
 
 ## Development
 
@@ -78,7 +95,7 @@ uv run --project <path-to-this-repo> harness board
 export ANTHROPIC_API_KEY=...   # or configure another provider in .harness/config.yaml
 uv run --project <path-to-this-repo> harness run
 
-# Or the whole pipeline from an idea:
+# Or the whole pipeline from an idea (the dashboard opens at http://127.0.0.1:8765):
 uv run harness init /tmp/calc && cd /tmp/calc
-uv run --project <path-to-this-repo> harness start "A command-line calculator in Python"
+uv run --project <path-to-this-repo> harness start "A command-line calculator in Python" --watch
 ```

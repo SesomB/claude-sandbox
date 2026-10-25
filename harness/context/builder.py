@@ -125,6 +125,7 @@ def base_pack(
     *,
     lessons: list[str] | None = None,
     include_files: bool = True,
+    guidance: str = "",
 ) -> Pack:
     pack = Pack(role)
     pack.add("Ticket", ticket_card(ticket))
@@ -142,6 +143,8 @@ def base_pack(
     conventions = _read(root, CONVENTIONS_PATH)
     if conventions:
         pack.add("Conventions", conventions)
+    if guidance:
+        pack.add("Guidance from the product owner (follow it)", guidance)
     if lessons:
         pack.add(
             "Lessons (rules learned on this project; follow them)",
@@ -163,9 +166,15 @@ def base_pack(
 
 
 def implementer_pack(
-    ticket: Ticket, root: Path, budget: int, lessons: list[str] | None = None
+    ticket: Ticket,
+    root: Path,
+    budget: int,
+    lessons: list[str] | None = None,
+    guidance: str = "",
 ) -> str:
-    return base_pack("implementer", ticket, root, lessons=lessons).check_budget(budget)
+    return base_pack("implementer", ticket, root, lessons=lessons, guidance=guidance).check_budget(
+        budget
+    )
 
 
 def reviewer_pack(
@@ -200,6 +209,6 @@ def fixer_pack(
     if findings:
         pack.add("Review findings to address", json.dumps(findings, indent=2))
     if merge_failure:
-        pack.add("Merge failure to fix (gates failed on the merged result)", merge_failure)
+        pack.add("Problem to fix (a failed merge or the product owner's guidance)", merge_failure)
     pack.add("Diff of this ticket against main so far", f"```diff\n{diff}\n```")
     return pack.check_budget(budget)

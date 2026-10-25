@@ -146,7 +146,7 @@ class ScriptedHuman:
         assert self.decisions, f"unexpected decision request: {request.question}"
         return self.decisions.pop(0)
 
-    async def approve(self, gate: str, summary: str) -> Any:
+    async def approve(self, approval_id: str, gate: str, summary: str) -> Any:
         self.gates.append((gate, summary))
         assert self.approvals, f"unexpected approval gate: {gate}"
         return self.approvals.pop(0)

@@ -36,10 +36,18 @@ from harness.context.builder import (
 from harness.core.hooks import ROLE_FOR_EVENT, HookRegistry, default_hooks
 from harness.core.merge import MergeQueue, group_ops, merge_ref
 from harness.core.runlog import log_agent_run
+from harness.escalation.decisions import DecisionRequest
+from harness.escalation.researcher import (
+    RESEARCHER_SYSTEM,
+    escalation_context,
+    fallback_request,
+)
+from harness.executors.local import LocalExecutor
 from harness.executors.worktree import git
 from harness.gates.checks import GateReport, build_and_test, format_files, run_gates
 from harness.gates.tdd import TddTracker, tdd_tools
 from harness.models import ModelClient, client_for_role
+from harness.phases.tools import phase_file_tools
 from harness.project import Project
 from harness.tools.base import Toolbox
 from harness.tools.files import read_tools, write_tools
@@ -166,6 +174,7 @@ class Orchestrator:
             "reviewer": self.review,
             "fixer": self.fix,
             "merger": self.merge,
+            "researcher": self.research,
         }[role]
         sem = self._sem or contextlib.nullcontext()
         async with sem:
@@ -193,6 +202,16 @@ class Orchestrator:
             if event.type == type and key in event.payload:
                 return event.payload
         return {}
+
+    def _since_escalation(self, ticket_id: str, type: str, **match: Any) -> int:
+        """Count matching events since the ticket's last escalation (a Board reset)."""
+        count = 0
+        for event in self.board.events_for(ticket_id):
+            if event.type == "ticket.escalated":
+                count = 0
+            elif event.type == type and all(event.payload.get(k) == v for k, v in match.items()):
+                count += 1
+        return count
 
     def _agent_name(self, role: str) -> str:
         return f"{role}-{next(self._ids)}"
@@ -228,7 +247,15 @@ class Orchestrator:
 
     def _log_run(self, ticket_id: str, role: str, agent: str, run: AgentRun[Any]) -> None:
         self.agent_runs += 1
-        log_agent_run(self.project, ticket_id, role, agent, run, ticket_id=ticket_id)
+        log_agent_run(
+            self.project,
+            ticket_id,
+            role,
+            agent,
+            run,
+            ticket_id=ticket_id,
+            model=self.project.config.model_for(role).model,
+        )
 
     async def _gates_on_finish(
         self, ws: TicketWorkspace, role: str, attempts: list[int]
@@ -271,6 +298,11 @@ class Orchestrator:
                     ws.root,
                     self._budget("implementer"),
                     self.lessons(ticket, "implementer"),
+                    guidance=str(
+                        self._last_payload(ticket_id, "ticket.ready", "guidance").get(
+                            "guidance", ""
+                        )
+                    ),
                 )
             except ContextBudgetExceeded as e:
                 self.board.escalate(ticket_id, str(e), kind="ticket_too_large")
@@ -380,7 +412,7 @@ class Orchestrator:
                 kind="review_rounds",
             )
             return
-        merge_failures = self.board.count_events(
+        merge_failures = self._since_escalation(
             ticket_id, "ticket.changes_requested", source="merge"
         )
         if merge_failures > self.cfg.max_merge_failures:
@@ -491,3 +523,52 @@ class Orchestrator:
                     stage=result.stage,
                     detail=result.detail,
                 )
+
+    async def research(self, ticket_id: str) -> None:
+        """Prepare the Board decision for an escalated ticket (once per escalation)."""
+        ticket = self.board.get(ticket_id)
+        if ticket.status is not S.ESCALATED:
+            return
+        escalated = self.board.last_event(ticket_id, "ticket.escalated")
+        pending = [d for d in self.board.decisions(open_only=True) if d["ticket_id"] == ticket_id]
+        if pending or escalated is None:
+            return
+        reason = str(escalated.payload.get("reason", ""))
+        evidence = escalation_context(self.board, ticket)
+        wt_path = self.project.worktrees.path_for(ticket_id)
+        root = wt_path if wt_path.exists() else self.project.root
+        tools = [
+            t
+            for t in phase_file_tools(
+                LocalExecutor(root), can_write=lambda p: False, writable_hint="nothing"
+            )
+            if t.name in ("read_file", "list_files")
+        ]
+
+        async def has_actions(req: DecisionRequest) -> str | None:
+            if any(o.action is None for o in req.options):
+                return "every option needs an action (retry, send_to_fixer, cancel, manual)"
+            return None
+
+        request: DecisionRequest
+        try:
+            client, max_tokens = self._client("researcher")
+            run = await run_agent(
+                client,
+                system=RESEARCHER_SYSTEM,
+                prompt=evidence,
+                toolbox=Toolbox(tools),
+                result_model=DecisionRequest,
+                finish_description="Submit the decision for the owner.",
+                on_finish=has_actions,
+                max_turns=self.cfg.agent_max_turns,
+                max_tokens=max_tokens,
+                retry=self.retry,
+            )
+            self._log_run(ticket_id, "researcher", self._agent_name("researcher"), run)
+            request = run.result if run.result is not None else fallback_request(ticket, reason)
+        except Exception as e:  # never leave an escalation without a question
+            self.board.log_event(ticket_id, "agent.crashed", role="researcher", error=repr(e))
+            request = fallback_request(ticket, reason)
+        if self.board.get(ticket_id).status is S.ESCALATED:
+            self.board.create_decision(request.model_dump(), ticket_id=ticket_id)

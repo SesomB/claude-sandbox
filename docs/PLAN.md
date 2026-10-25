@@ -403,7 +403,7 @@ tests/
   Tickets written by hand, tested on a small Python repo and a small C++ repo.
 - **M2 – Upstream phases (done):** Spec Writer/Critic, Architect, Decomposer + ticket linter;
   full pipeline on a toy app.
-- **M3 – Board:** decision requests + Researcher, local web dashboard + CLI, usage tracking.
+- **M3 – Board (done):** decision requests + Researcher, local web dashboard + CLI, usage tracking.
 - **M4 – Learning:** lesson store with auto-apply, injection into context packs,
   Librarian, skill promotion, revoke/edit on the dashboard.
 - **M5 – Hardening:** integration/QA phase, more providers, optional Docker executor,

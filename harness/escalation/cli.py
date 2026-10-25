@@ -14,7 +14,8 @@ def render_request(decision_id: str, req: DecisionRequest) -> str:
         lines.append(textwrap.indent(req.context.strip(), "  "))
     for i, opt in enumerate(req.options, 1):
         star = "  (recommended)" if opt.name == req.recommendation else ""
-        lines.append(f"\n  [{i}] {opt.name}{star}")
+        action = f"  -> {opt.action}" if opt.action else ""
+        lines.append(f"\n  [{i}] {opt.name}{star}{action}")
         if opt.description:
             lines.append(textwrap.indent(opt.description.strip(), "      "))
         lines += [f"      + {p}" for p in opt.pros]
@@ -51,8 +52,8 @@ class CliHuman:
         )
         return parse_choice(request, answer)
 
-    async def approve(self, gate: str, summary: str) -> Approval:
-        print(f"\n=== Approval gate: {gate}\n{textwrap.indent(summary.strip(), '  ')}")
+    async def approve(self, approval_id: str, gate: str, summary: str) -> Approval:
+        print(f"\n=== Approval {approval_id}: {gate}\n{textwrap.indent(summary.strip(), '  ')}")
         answer = (await self._input("\nApprove? [y/N, or type feedback to revise]: ")).strip()
         if answer.lower() in ("y", "yes"):
             return Approval(approved=True)
