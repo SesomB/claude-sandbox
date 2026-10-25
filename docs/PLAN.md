@@ -96,11 +96,16 @@ another *open* ticket's owned files; the estimated context pack is over budget
 ### Lifecycle (state machine)
 
 ```
-draft ─▶ ready ─▶ claimed ─▶ implementing ─▶ in_review ─┬─▶ approved ─▶ merging ─▶ done
-                                  ▲                     │
-                                  └──── fixing ◀────────┘ changes_requested
-any state ──▶ blocked / escalated  (on repeated failure, spec gap, contract change)
+draft ─▶ waiting ─▶ ready ─▶ implementing ─▶ awaiting_review ─▶ reviewing ─┬─▶ approved ─▶ merging ─▶ done
+          (deps)                                   ▲                       │                 │
+                                                   └── fixing ◀── changes_requested ◀────────┘ (merge failed)
+any non-final state ──▶ escalated ──▶ (Board decides) ready / awaiting_review / changes_requested / cancelled
 ```
+
+`ready`, `awaiting_review`, `changes_requested` and `approved` are **claimable**: an
+agent (Implementer, Reviewer, Fixer, merge queue) atomically claims the ticket and
+holds it under a lease. If the lease expires, the ticket returns to where it was
+claimed from.
 
 A ticket becomes `ready` only when all `depends_on` tickets are `done`.
 

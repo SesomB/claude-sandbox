@@ -1,0 +1,16 @@
+name: cpp-cmake
+description: C++ project built with CMake, tested with GoogleTest or Catch2 via CTest.
+detect: [CMakeLists.txt]
+configure: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+build: cmake --build build -j
+test: ctest --test-dir build --output-on-failure --no-tests=error
+test_one: ctest --test-dir build --output-on-failure --no-tests=error -R {test_id}
+lint: clang-tidy -p build {files}
+format: clang-format -i {files}
+typecheck: cmake --build build -j
+coverage: gcovr -r . --json-summary
+test_framework: googletest
+contracts: libclang
+source_globs: ["**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.hpp", "**/*.h"]
+test_globs: ["tests/**/*.cpp", "**/*_test.cpp", "**/test_*.cpp"]
+shared_files: ["**/CMakeLists.txt", "**/*.cmake", vcpkg.json, conanfile.txt, conanfile.py]

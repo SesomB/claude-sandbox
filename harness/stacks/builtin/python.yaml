@@ -1,0 +1,15 @@
+name: python
+description: Python project managed with uv (pyproject.toml), pytest, ruff, mypy.
+detect: [pyproject.toml, setup.py, requirements.txt]
+configure: uv sync
+test: uv run pytest -q
+test_one: uv run pytest -q {test_id}
+lint: uv run ruff check {files}
+format: uv run ruff format {files}
+typecheck: uv run mypy {files}
+coverage: uv run pytest -q --cov --cov-report=json
+test_framework: pytest
+contracts: python-ast
+source_globs: ["**/*.py"]
+test_globs: ["tests/**/test_*.py", "**/test_*.py", "**/*_test.py"]
+shared_files: [pyproject.toml, uv.lock, requirements*.txt, "**/__init__.py", conftest.py]
