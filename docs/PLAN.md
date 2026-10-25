@@ -1,4 +1,4 @@
-# Software Development Harness — Plan (draft v1)
+# Software Development Harness — Plan (draft v2)
 
 A Python, provider-agnostic engine that turns a product idea into working
 software through a **ticket-driven, waterfall pipeline** run by small,
@@ -25,10 +25,15 @@ escalated, and every escalation arrives as a ready-to-decide set of options.
 
 | Area      | Decision                                              |
 |-----------|-------------------------------------------------------|
-| Language  | Python 3.12+, asyncio                                 |
+| Engine language | Python 3.12+, asyncio                           |
+| Generated apps | **Any language** via pluggable Stack Profiles (§11); Python and C++ first |
 | Models    | Provider-agnostic `ModelClient`; different models per role allowed |
 | Process   | Waterfall phases with gates, ticket-based execution   |
 | Execution | `Executor` interface; per-ticket git worktree as the first backend |
+| Limits    | No cost budget, no cap on parallel agents (only provider rate limits apply, §4) |
+| Learning  | Lessons apply automatically; visible and revocable on the dashboard |
+| Dashboard | Local web dashboard only, no external notifications   |
+| Merging   | Harness merges approved tickets into `main` itself via the merge queue |
 
 ---
 
@@ -113,9 +118,21 @@ A ticket becomes `ready` only when all `depends_on` tickets are `done`.
   2. Isolation: each ticket runs in its own git worktree/branch.
   3. Scope check: the diff may only touch `owned_files`, otherwise it is rejected mechanically.
   4. Merge queue: merges are serialized; each merge rebases and re-runs the gates.
-- **Dashboard:** a web UI (FastAPI + simple frontend) showing a kanban of tickets,
-  the live event feed, costs, and the **Decisions** inbox. A CLI (`harness board`)
-  shows the same data.
+  5. Shared files (build files, dependency manifests, package `__init__`s) are never
+     owned by a ticket. Agents request changes to them through structured tools
+     (`add_source_file`, `add_dependency`, ...) and the merge queue applies those
+     requests one at a time (§11).
+- **Concurrency:** no fixed cap. Every `ready` ticket gets an Implementer at once.
+  The only throttle is the model provider's rate limit: the scheduler backs off
+  on rate-limit errors and resumes automatically. Token usage and cost are tracked
+  and shown, but never limit the work.
+- **Merging into `main`:** the merge queue takes each approved ticket, rebases it on
+  `main`, runs the full gates on the combined result, and fast-forwards `main`.
+  If `main` ever goes red after a merge, the harness reverts that merge automatically,
+  reopens the ticket with the failure attached, and continues.
+- **Dashboard:** a local web UI (FastAPI + a simple frontend) showing a kanban of
+  tickets, the live event feed, token/cost usage, the **Decisions** inbox, and the
+  **Lessons** list. No external notifications. A CLI (`harness board`) shows the same data.
 
 ## 5. Hooks (event-driven orchestration)
 
@@ -205,7 +222,7 @@ impact_if_delayed: blocks T-042, T-045
 - You choose an option, write your own, or ask a follow-up question. Your reason is
   saved as a lesson (§9).
 - What gets escalated: spec gaps, contract changes, repeated failures, conflicting
-  findings, security trade-offs, anything exceeding a budget.
+  findings, security trade-offs, a new lesson that contradicts the approved spec.
 
 ## 9. Learning (lessons & skills)
 
@@ -216,10 +233,14 @@ impact_if_delayed: blocks T-042, T-045
   - Your feedback ("don't do X") becomes a lesson immediately, at high priority.
   - The same review finding kind appearing 2+ times becomes a candidate lesson.
   - Repeated gate failures (e.g. the same lint rule) become a lesson.
+- **Auto-apply:** new lessons take effect for the next agent spawned, with no approval
+  step. Every lesson appears on the dashboard with its source and hit count, and you
+  can edit or revoke any of them. The only exception is a lesson that contradicts
+  the approved spec: that is escalated instead of applied.
 - **Use:** the Context Builder injects only the lessons relevant to the ticket's scope
   (top-k, within budget), so learning doesn't bloat context.
 - **Curation:** a Librarian agent periodically merges duplicates, generalizes,
-  and retires lessons that no longer match anything; changes to high-impact rules go to the Board.
+  and retires lessons that no longer match anything (all logged, all revocable).
 - **Skills:** stable lesson clusters are promoted into role prompts / skill files
   (versioned), so the lessons become part of the agents' standard instructions.
 
@@ -239,6 +260,48 @@ Deterministic tools the agents call; the harness trusts their results, not the a
 | `spec_trace` | Map tests ↔ acceptance criteria; find uncovered `AC-*` |
 | `context_budget` | Measure a context pack's token size |
 | `merge_check` | Simulate rebase/merge and re-run gates |
+
+Every tool that depends on the language (tests, lint, types, coverage, contracts)
+is resolved through the project's Stack Profile (§11), so the agents call the same
+tool names in every language.
+
+## 11. Stack Profiles (language-agnostic)
+
+The engine itself knows no language. Everything language-specific lives in a
+**Stack Profile**: a YAML file plus an optional small Python plugin.
+
+```yaml
+name: cpp-cmake
+detect: [CMakeLists.txt]
+build:      cmake --build build -j
+test:       ctest --test-dir build --output-on-failure
+test_one:   ctest --test-dir build -R "{test_id}" --output-on-failure
+lint:       clang-tidy -p build {files}
+format:     clang-format -i {files}
+typecheck:  "{build}"                     # compiling is the type check
+coverage:   gcovr -r . --json
+test_framework: googletest
+contracts:  libclang                      # plugin: extract public signatures
+shared_files: ["**/CMakeLists.txt", "vcpkg.json", "conanfile.txt"]
+conventions: docs/conventions/cpp.md
+```
+
+| Profile | Build / deps | Tests | Lint / format | Types | Coverage | Contracts |
+|---------|--------------|-------|---------------|-------|----------|-----------|
+| `python` | uv / pyproject | pytest | ruff | mypy / pyright | coverage.py | `ast` |
+| `cpp-cmake` | CMake + vcpkg/Conan | GoogleTest or Catch2 via CTest | clang-tidy, clang-format | compiler (+ `-Wall -Werror`) | gcovr / llvm-cov | libclang |
+
+- **Choosing a stack:** the Architect proposes the stack per module (one project can
+  mix, e.g. a C++ core with Python bindings); you approve it at the architecture gate.
+- **Any other language:** if no profile exists, a Toolchain agent drafts one, and the
+  harness validates it mechanically on the skeleton (builds, a sample test goes red
+  then green, lint runs). Only a profile that passes is used; otherwise it is escalated.
+- **C++ details:** tickets own header + source + test files together; `CMakeLists.txt`
+  is a shared file, changed only through `add_source_file` / `add_test_target` requests
+  applied by the merge queue, so parallel tickets never clash on build files.
+  Sanitizers (ASan/UBSan) run as an extra gate in debug builds.
+- **Python details:** `pyproject.toml` dependencies and package `__init__.py`
+  exports are shared files, changed through `add_dependency` / `export_symbol`.
 
 ---
 
@@ -280,23 +343,27 @@ tests/
 ## Milestones
 
 - **M0 – Foundations:** package, CI, `ModelClient` + fake model, `Executor` + worktree,
-  SQLite board with atomic claim + leases (with concurrency tests).
+  SQLite board with atomic claim + leases (with concurrency tests), Stack Profile
+  loader with `python` and `cpp-cmake` profiles.
 - **M1 – Build loop:** event bus + hooks; Implementer → gates → Reviewer → Fixer with
-  TDD red→green verification; merge queue. Tickets written by hand.
+  TDD red→green verification; merge queue with shared-file requests and auto-revert.
+  Tickets written by hand, tested on a small Python repo and a small C++ repo.
 - **M2 – Upstream phases:** Spec Writer/Critic, Architect, Decomposer + ticket linter;
   full pipeline on a toy app.
-- **M3 – Board:** decision requests + Researcher, web dashboard + CLI, budgets.
-- **M4 – Learning:** lesson store, injection into context packs, Librarian, skill promotion.
-- **M5 – Hardening:** Docker executor, integration/QA phase, more providers, more language stacks.
+- **M3 – Board:** decision requests + Researcher, local web dashboard + CLI, usage tracking.
+- **M4 – Learning:** lesson store with auto-apply, injection into context packs,
+  Librarian, skill promotion, revoke/edit on the dashboard.
+- **M5 – Hardening:** Docker executor, integration/QA phase, more providers,
+  Toolchain agent for new languages.
 
 M1 is first on purpose: the build loop is the core of the system, and it can be
 tested with hand-written tickets before the spec/decomposition agents exist.
 
 ## Open questions
 
-1. First target stack for the generated apps (e.g. Python/FastAPI, TypeScript/React)?
-   This decides the first gate implementations.
-2. Max parallel implementers, and a cost budget per project?
-3. Should new lessons apply automatically, or wait for your approval?
-4. Dashboard: is a local web UI enough, or do you also want notifications (Slack/email/phone)?
-5. Merging: does the harness merge into `main` itself, or open PRs for you?
+1. Which model provider(s) and models per role (e.g. strongest model for Spec/Architect/
+   Reviewer, a faster one for Implementers)?
+2. Where do the generated apps live: one new git repo per project on this machine,
+   optionally pushed to GitHub?
+3. Is the harness run on your own machine (where Python and C++ toolchains exist), or
+   should M0 already include Docker images for the toolchains?
