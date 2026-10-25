@@ -101,6 +101,72 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _idea(args: argparse.Namespace) -> str:
+    if args.file:
+        return Path(args.file).read_text()
+    if args.idea:
+        return str(args.idea)
+    raise ValueError("describe the product idea as an argument or with --file")
+
+
+async def _run_phases(project: Project, phases: list[str], idea: str | None) -> int:
+    from harness.core.orchestrator import Orchestrator
+    from harness.escalation.cli import CliHuman
+    from harness.phases.pipeline import Pipeline
+
+    pipeline = Pipeline(project, CliHuman())
+    for phase in phases:
+        if phase == "spec":
+            assert idea is not None
+            result = await pipeline.spec(idea)
+        elif phase == "architecture":
+            result = await pipeline.architecture()
+        elif phase == "plan":
+            result = await pipeline.plan()
+        else:
+            summary = await Orchestrator(project).run()
+            counts = ", ".join(f"{k}={v}" for k, v in sorted(summary.by_status.items()))
+            print(f"Build loop finished: {counts}")
+            continue
+        print(f"[{phase}] {result.message}")
+        if not result.ok:
+            return 1
+    return 0
+
+
+def _cmd_phase(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from harness.phases.pipeline import PHASES, PhaseError
+
+    project = Project.open(Path(args.project))
+    current = project.board.get_meta("phase", "spec") or "spec"
+    if args.phase_command == "status":
+        print(f"Current phase: {current}")
+        return 0
+    if args.phase_command == "start":
+        phases = list(PHASES[PHASES.index(current) :])
+    else:
+        phases = [args.phase_command]
+    idea = _idea(args) if "spec" in phases else None
+    try:
+        return asyncio.run(_run_phases(project, phases, idea))
+    except PhaseError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _cmd_decisions(args: argparse.Namespace) -> int:
+    project = Project.open(Path(args.project))
+    for d in project.board.decisions():
+        req, ans = d["request"], d["answer"]
+        status = "open" if ans is None else (ans.get("choice") or ans.get("note") or "answered")
+        print(
+            f"{d['id']:<6} [{d['phase'] or d['ticket_id'] or '-'}] {req['question']}  ->  {status}"
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness", description=__doc__)
     parser.add_argument("-C", "--project", default=".", help="project directory (default: .)")
@@ -132,6 +198,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", choices=[s.value for s in TicketStatus])
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_board)
+
+    for name, help_text in (
+        ("start", "run all remaining phases, from the spec interview to merged code"),
+        ("spec", "phase 1: write and approve the spec sheet"),
+        ("architecture", "phase 2: design, contracts and skeleton"),
+        ("plan", "phase 3: break the spec into tickets"),
+        ("status", "show the current phase"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("idea", nargs="?", help="the product idea (spec/start)")
+        p.add_argument("--file", help="read the product idea from a file")
+        p.set_defaults(func=_cmd_phase, phase_command=name)
+
+    p = sub.add_parser("decisions", help="list the Board's decisions")
+    p.set_defaults(func=_cmd_decisions)
 
     p = sub.add_parser("run", help="run the build loop until no work is left")
     p.add_argument("--watch", action="store_true", help="keep running and wait for new work")

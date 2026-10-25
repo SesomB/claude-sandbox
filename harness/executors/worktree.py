@@ -93,10 +93,10 @@ class WorktreeManager:
             raise ValueError(f"invalid ticket id for a worktree: {ticket_id!r}")
         return self.worktrees_dir / ticket_id
 
-    def create(self, ticket_id: str, base: str = "main") -> Worktree:
+    def create(self, ticket_id: str, base: str = "main", *, branch: str | None = None) -> Worktree:
         """Create (or reuse) the ticket's worktree on branch ``ticket/<id>`` from ``base``."""
         path = self.path_for(ticket_id)
-        branch = self.branch_for(ticket_id)
+        branch = branch or self.branch_for(ticket_id)
         if path.exists():
             return Worktree(ticket_id, path, branch)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
@@ -107,13 +107,15 @@ class WorktreeManager:
             git(self.repo_root, "worktree", "add", "-b", branch, str(path), base)
         return Worktree(ticket_id, path, branch)
 
-    def remove(self, ticket_id: str, *, delete_branch: bool = False) -> None:
+    def remove(
+        self, ticket_id: str, *, delete_branch: bool = False, branch: str | None = None
+    ) -> None:
         path = self.path_for(ticket_id)
         if path.exists():
             git(self.repo_root, "worktree", "remove", "--force", str(path))
         git(self.repo_root, "worktree", "prune")
         if delete_branch:
-            branch = self.branch_for(ticket_id)
+            branch = branch or self.branch_for(ticket_id)
             if git(self.repo_root, "branch", "--list", branch).strip():
                 git(self.repo_root, "branch", "-D", branch)
 

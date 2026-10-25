@@ -77,3 +77,14 @@ def test_cli_ticket_flow(git_repo: Path, capsys: pytest.CaptureFixture[str]) -> 
         assert "already owned by T-1" in capsys.readouterr().err
     finally:
         os.chdir(cwd)
+
+
+def test_cli_phase_status_and_decisions(git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["init", str(git_repo)]) == 0
+    assert main(["-C", str(git_repo), "status"]) == 0
+    assert "Current phase: spec" in capsys.readouterr().out
+    project = Project.open(git_repo)
+    project.board.create_decision({"question": "Which DB?"}, phase="architecture")
+    assert main(["-C", str(git_repo), "decisions"]) == 0
+    assert "D-1    [architecture] Which DB?  ->  open" in capsys.readouterr().out
+    assert main(["-C", str(git_repo), "spec"]) == 1  # no idea given

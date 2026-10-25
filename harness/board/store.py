@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS shared_edits (
     path      TEXT NOT NULL,
     op        TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS decisions (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          TEXT NOT NULL UNIQUE,
+    phase       TEXT,
+    ticket_id   TEXT,
+    request     TEXT NOT NULL,
+    answer      TEXT,
+    created_at  REAL NOT NULL,
+    answered_at REAL
+);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -395,6 +405,58 @@ class Board:
                 "SELECT path, op FROM shared_edits WHERE ticket_id=? ORDER BY seq", (ticket_id,)
             ).fetchall()
         return [(r["path"], json.loads(r["op"])) for r in rows]
+
+    def create_decision(
+        self, request: dict[str, Any], *, phase: str | None = None, ticket_id: str | None = None
+    ) -> str:
+        """Record a decision request for the Board; returns its id (D-1, D-2, ...)."""
+        with self._tx() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] + 1
+            decision_id = f"D-{n}"
+            conn.execute(
+                "INSERT INTO decisions (id, phase, ticket_id, request, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (decision_id, phase, ticket_id, json.dumps(request), self._clock()),
+            )
+            self._emit(conn, ticket_id, "decision.requested", decision=decision_id, phase=phase)
+            return decision_id
+
+    def answer_decision(self, decision_id: str, answer: dict[str, Any]) -> None:
+        with self._tx() as conn:
+            cur = conn.execute(
+                "UPDATE decisions SET answer=?, answered_at=? WHERE id=? AND answer IS NULL",
+                (json.dumps(answer), self._clock(), decision_id),
+            )
+            if cur.rowcount != 1:
+                raise BoardError(f"{decision_id} does not exist or is already answered")
+            row = conn.execute(
+                "SELECT ticket_id, phase FROM decisions WHERE id=?", (decision_id,)
+            ).fetchone()
+            self._emit(
+                conn,
+                row["ticket_id"],
+                "decision.answered",
+                decision=decision_id,
+                phase=row["phase"],
+                answer=answer,
+            )
+
+    def decisions(self, *, open_only: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM decisions"
+        if open_only:
+            query += " WHERE answer IS NULL"
+        with closing(self._connect()) as conn:
+            rows = conn.execute(query + " ORDER BY seq").fetchall()
+        return [
+            {
+                "id": r["id"],
+                "phase": r["phase"],
+                "ticket_id": r["ticket_id"],
+                "request": json.loads(r["request"]),
+                "answer": json.loads(r["answer"]) if r["answer"] else None,
+            }
+            for r in rows
+        ]
 
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         with closing(self._connect()) as conn:

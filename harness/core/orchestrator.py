@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
-import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -36,6 +35,7 @@ from harness.context.builder import (
 )
 from harness.core.hooks import ROLE_FOR_EVENT, HookRegistry, default_hooks
 from harness.core.merge import MergeQueue, group_ops, merge_ref
+from harness.core.runlog import log_agent_run
 from harness.executors.worktree import git
 from harness.gates.checks import GateReport, build_and_test, format_files, run_gates
 from harness.gates.tdd import TddTracker, tdd_tools
@@ -228,21 +228,7 @@ class Orchestrator:
 
     def _log_run(self, ticket_id: str, role: str, agent: str, run: AgentRun[Any]) -> None:
         self.agent_runs += 1
-        log_dir = self.project.harness_dir / "logs" / ticket_id
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / f"{agent}.jsonl").open("w") as f:
-            for m in run.messages:
-                f.write(json.dumps(m.model_dump(mode="json")) + "\n")
-        self.board.log_event(
-            ticket_id,
-            "agent.finished",
-            role=role,
-            agent=agent,
-            outcome=run.outcome,
-            reason=run.reason,
-            turns=run.turns,
-            usage=run.usage.model_dump(),
-        )
+        log_agent_run(self.project, ticket_id, role, agent, run, ticket_id=ticket_id)
 
     async def _gates_on_finish(
         self, ws: TicketWorkspace, role: str, attempts: list[int]

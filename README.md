@@ -31,7 +31,25 @@ Profiles (`python`, `cpp-cmake`), CLI.
   the exact merged commit before `main` moves
 - `harness run`: run the build loop until no work is left
 
-Next: **M2 – upstream phases** (Spec Writer/Critic, Architect, Decomposer + ticket linter).
+**M2 – Upstream phases** (done):
+
+- `harness.escalation`: Board decisions. A question to the human cannot be created
+  without at least two options, each with pros and cons, and a recommendation. Every
+  decision is recorded on the board; a terminal channel (`CliHuman`) answers them.
+- `harness.phases`: the waterfall pipeline, each phase ending at an approval gate where
+  rejection feedback starts another round:
+  1. **spec**: Spec Writer interviews you (via decisions) and writes `docs/spec.md` with
+     stable ids (G-, US-, AC-, NFR-, C-, OOS-); the spec linter (no open questions, ids
+     unique, required sections) and a Spec Critic push back before you see it
+  2. **architecture**: Architect writes `docs/architecture.md` (named interface
+     contracts), `docs/conventions.md` and a skeleton that must pass its gates; picks stacks
+  3. **plan**: Decomposer writes tickets; the ticket linter (size, ownership, shared files,
+     tests, spec coverage of every AC, contracts, dependencies, cycles, readable files,
+     context budget) and a Plan Critic push back; approved tickets go on the board
+- CLI: `harness start "idea"` runs every remaining phase and then the build loop;
+  `harness spec|architecture|plan|status|decisions`
+
+Next: **M3 – the Board dashboard** (local web UI for tickets, events, decisions, usage).
 
 ## Development
 
@@ -59,4 +77,8 @@ uv run --project <path-to-this-repo> harness ticket add tickets.yaml --queue
 uv run --project <path-to-this-repo> harness board
 export ANTHROPIC_API_KEY=...   # or configure another provider in .harness/config.yaml
 uv run --project <path-to-this-repo> harness run
+
+# Or the whole pipeline from an idea:
+uv run harness init /tmp/calc && cd /tmp/calc
+uv run --project <path-to-this-repo> harness start "A command-line calculator in Python"
 ```

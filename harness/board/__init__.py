@@ -1,4 +1,4 @@
-from harness.board.models import Ticket, TicketStatus
+from harness.board.models import Ticket, TicketSpec, TicketStatus
 from harness.board.store import (
     Board,
     BoardError,
@@ -16,5 +16,6 @@ __all__ = [
     "NotHolder",
     "OwnershipConflict",
     "Ticket",
+    "TicketSpec",
     "TicketStatus",
 ]

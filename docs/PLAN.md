@@ -394,14 +394,14 @@ tests/
 
 ## Milestones
 
-- **M0 – Foundations:** package, CI, config loading + role→model resolution,
+- **M0 – Foundations (done):** package, CI, config loading + role→model resolution,
   `ModelClient` + fake model, `Executor` + worktree manager, `harness init`,
   SQLite board with atomic claim + leases (with concurrency tests), Stack Profile
   loader with `python` and `cpp-cmake` profiles.
-- **M1 – Build loop:** event bus + hooks; Implementer → gates → Reviewer → Fixer with
+- **M1 – Build loop (done):** event bus + hooks; Implementer → gates → Reviewer → Fixer with
   TDD red→green verification; merge queue with shared-file requests and auto-revert.
   Tickets written by hand, tested on a small Python repo and a small C++ repo.
-- **M2 – Upstream phases:** Spec Writer/Critic, Architect, Decomposer + ticket linter;
+- **M2 – Upstream phases (done):** Spec Writer/Critic, Architect, Decomposer + ticket linter;
   full pipeline on a toy app.
 - **M3 – Board:** decision requests + Researcher, local web dashboard + CLI, usage tracking.
 - **M4 – Learning:** lesson store with auto-apply, injection into context packs,

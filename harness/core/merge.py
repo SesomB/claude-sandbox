@@ -91,9 +91,6 @@ class MergeQueue:
         self.merge_dir = worktrees.worktrees_dir / "_merge"
         self._lock = asyncio.Lock()
 
-    def _is_shared(self, path: str) -> bool:
-        return any(s.is_shared_file(path) for s in self.stacks)
-
     def _prepare(self) -> str:
         if not self.merge_dir.exists():
             self.merge_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -120,25 +117,40 @@ class MergeQueue:
         return MergeResult(True, commit=new)
 
     async def merge(self, ticket: Ticket) -> MergeResult:
+        return await self.merge_branch(
+            WorktreeManager.branch_for(ticket.id),
+            message=f"Merge {ticket.id}: {ticket.title}",
+            ops=group_ops(self.board.shared_edits(ticket.id)),
+            ticket_id=ticket.id,
+        )
+
+    async def merge_branch(
+        self,
+        branch: str,
+        *,
+        message: str,
+        ops: dict[str, list[dict[str, Any]]] | None = None,
+        stacks: list[StackProfile] | None = None,
+        ticket_id: str | None = None,
+    ) -> MergeResult:
+        """Merge ``branch`` into main, gating the exact merged commit before main moves."""
+        stacks = self.stacks if stacks is None else stacks
         async with self._lock:
             old = self._prepare()
-            branch = WorktreeManager.branch_for(ticket.id)
             res = merge_ref(
                 self.merge_dir,
                 branch,
-                message=f"Merge {ticket.id}: {ticket.title}",
+                message=message,
                 main_side="ours",
-                ops=group_ops(self.board.shared_edits(ticket.id)),
-                is_shared=self._is_shared,
+                ops=ops or {},
+                is_shared=lambda p: any(s.is_shared_file(p) for s in stacks),
             )
             if not res.ok:
                 return res
             changed = git(self.merge_dir, "diff", "--name-only", old, "HEAD").splitlines()
             report = GateReport()
-            await build_and_test(
-                self.stacks, LocalExecutor(self.merge_dir), report, changed=changed
-            )
-            self.board.log_event(ticket.id, "merge.gates", **report.as_payload())
+            await build_and_test(stacks, LocalExecutor(self.merge_dir), report, changed=changed)
+            self.board.log_event(ticket_id, "merge.gates", branch=branch, **report.as_payload())
             if not report.ok:
                 git(self.merge_dir, "reset", "-q", "--hard", old)
                 return MergeResult(False, "gates", report.summary())

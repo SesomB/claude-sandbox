@@ -118,8 +118,7 @@ class RoutingClient:
             first = messages[0].content[0]
             text = getattr(first, "text", "")
             m = _TICKET_RE.search(text)
-            assert m, "no ticket id in the agent's first prompt"
-            ticket_id = m.group(1)
+            ticket_id = m.group(1) if m else "-"  # phase agents have no ticket
             runs = self.agents.scripts[(self.role, ticket_id)]
             assert runs, f"no script left for {self.role} on {ticket_id}"
             self.inner = FakeModelClient(runs.pop(0))
@@ -129,3 +128,25 @@ class RoutingClient:
 
 def ticket(id: str, **kw: Any) -> Ticket:
     return Ticket(id=id, title=kw.pop("title", f"ticket {id}"), **kw)
+
+
+class ScriptedHuman:
+    """Answers decisions and approval gates from scripts, recording what it was shown."""
+
+    def __init__(
+        self, decisions: list[Any] | None = None, approvals: list[Any] | None = None
+    ) -> None:
+        self.decisions = list(decisions or [])
+        self.approvals = list(approvals or [])
+        self.requests: list[Any] = []
+        self.gates: list[tuple[str, str]] = []
+
+    async def decide(self, decision_id: str, request: Any) -> Any:
+        self.requests.append((decision_id, request))
+        assert self.decisions, f"unexpected decision request: {request.question}"
+        return self.decisions.pop(0)
+
+    async def approve(self, gate: str, summary: str) -> Any:
+        self.gates.append((gate, summary))
+        assert self.approvals, f"unexpected approval gate: {gate}"
+        return self.approvals.pop(0)

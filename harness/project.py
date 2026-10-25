@@ -76,6 +76,7 @@ class Project:
     config: HarnessConfig
     board: Board
     worktrees: WorktreeManager
+    user_config: Path | None = None
     _stacks: list[StackProfile] | None = field(default=None, repr=False)
 
     @property
@@ -90,12 +91,34 @@ class Project:
             config=load_config(root, user_config),
             board=Board(root / HARNESS_DIR / "board.db"),
             worktrees=WorktreeManager(root),
+            user_config=user_config,
         )
+
+    def reload(self) -> None:
+        """Re-read config and stacks (after a phase changed them on main)."""
+        self.config = load_config(self.root, self.user_config)
+        self._stacks = None
 
     def stacks(self) -> list[StackProfile]:
         if self._stacks is None:
             self._stacks = resolve_stacks(self.root, self.config.stacks)
         return self._stacks
+
+
+def set_stacks_in_config(config_path: Path, stacks: list[str]) -> None:
+    """Set the top-level ``stacks:`` key in a config file, keeping its comments."""
+    text = config_path.read_text() if config_path.exists() else ""
+    line = f"stacks: [{', '.join(stacks)}]"
+    out, replaced = [], False
+    for existing in text.splitlines():
+        if existing.startswith("stacks:"):
+            out.append(line)
+            replaced = True
+        else:
+            out.append(existing)
+    if not replaced:
+        out.append(line)
+    config_path.write_text("\n".join(out) + "\n")
 
 
 def init_project(path: Path, *, user_config: Path | None = None) -> Project:

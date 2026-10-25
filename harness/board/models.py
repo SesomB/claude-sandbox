@@ -65,7 +65,9 @@ def normalize_repo_path(path: str) -> str:
     return p.as_posix()
 
 
-class Ticket(BaseModel):
+class TicketSpec(BaseModel):
+    """The authored part of a ticket (what a Decomposer writes)."""
+
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     title: str
     spec_refs: list[str] = Field(default_factory=list)
@@ -78,16 +80,22 @@ class Ticket(BaseModel):
     size: Literal["S", "M", "L"] = "S"
     priority: int = 0
 
+    @field_validator("owned_files", "readable_files", "tests_required")
+    @classmethod
+    def _normalize_paths(cls, paths: list[str]) -> list[str]:
+        return sorted({normalize_repo_path(p) for p in paths})
+
+
+class Ticket(TicketSpec):
     # Runtime state, owned by the Board; ignored when a ticket is added.
     status: TicketStatus = S.DRAFT
     agent: str | None = None
     lease_until: float | None = None
     review_rounds: int = 0
 
-    @field_validator("owned_files", "readable_files", "tests_required")
     @classmethod
-    def _normalize_paths(cls, paths: list[str]) -> list[str]:
-        return sorted({normalize_repo_path(p) for p in paths})
+    def from_spec(cls, spec: TicketSpec) -> Ticket:
+        return cls.model_validate(spec.model_dump())
 
     def spec(self) -> dict[str, object]:
         """The authored part of the ticket, without runtime state."""

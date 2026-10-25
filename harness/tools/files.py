@@ -49,6 +49,16 @@ class SharedEditInput(BaseModel):
     old: str | None = Field(default=None, description="For replace: exact text, occurring once")
 
 
+def replace_once(text: str, old: str, new: str, path: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise ToolError(
+            f"`old` occurs {count} times in {path}; it must occur exactly once"
+            + (" (re-read the file)" if count == 0 else " (add surrounding context)")
+        )
+    return text.replace(old, new, 1)
+
+
 def read_tools(ws: TicketWorkspace) -> list[Tool]:
     async def read_file(args: ReadFileInput) -> str:
         path = ws.check_read(args.path)
@@ -105,13 +115,7 @@ def write_tools(ws: TicketWorkspace) -> list[Tool]:
         if not ws.executor.exists(path):
             raise ToolError(f"{path} does not exist; use write_file to create it")
         text = ws.executor.read_text(path)
-        count = text.count(args.old)
-        if count != 1:
-            raise ToolError(
-                f"`old` occurs {count} times in {path}; it must occur exactly once"
-                + (" (re-read the file)" if count == 0 else " (add surrounding context)")
-            )
-        ws.executor.write_text(path, text.replace(args.old, args.new, 1))
+        ws.executor.write_text(path, replace_once(text, args.old, args.new, path))
         return f"edited {path}"
 
     async def run_check(args: RunCheckInput) -> str:
