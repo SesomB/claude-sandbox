@@ -292,6 +292,114 @@ def _cmd_learn(args: argparse.Namespace) -> int:
     return _cmd_lessons(argparse.Namespace(project=args.project, all=False))
 
 
+DOCTOR_ROLES = (
+    "spec_writer",
+    "spec_critic",
+    "architect",
+    "decomposer",
+    "plan_critic",
+    "implementer",
+    "reviewer",
+    "fixer",
+    "researcher",
+    "librarian",
+)
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    import asyncio
+    import os
+    import shutil
+    import subprocess
+
+    from harness.agents.runners import CLI_RUNNERS
+
+    project = Project.open(Path(args.project))
+    cfg = project.config
+    ok = True
+    used: dict[tuple[str, str], str] = {}
+    for role in DOCTOR_ROLES:
+        try:
+            rm = cfg.model_for(role)
+        except ConfigError as e:
+            print(f"{role:<12} ✗ {e}")
+            ok = False
+            continue
+        used.setdefault((rm.provider, rm.model), role)
+        print(f"{role:<12} {rm.provider}:{rm.model}")
+    print()
+    for name, provider in cfg.providers.items():
+        if not any(p == name for p, _ in used):
+            continue
+        extra = provider.model_extra or {}
+        if provider.type in CLI_RUNNERS:
+            command = str(extra.get("command") or CLI_RUNNERS[provider.type].default_command)
+            path = shutil.which(command)
+            if path is None:
+                print(f"{name:<12} ✗ `{command}` not found on PATH")
+                ok = False
+                continue
+            version = subprocess.run(
+                [command, "--version"], capture_output=True, text=True, timeout=30
+            ).stdout.strip()
+            print(f"{name:<12} ✓ {provider.type}: {path} ({version or 'version unknown'})")
+        elif provider.api_key_env:
+            has_key = bool(os.environ.get(provider.api_key_env))
+            ok = ok and has_key
+            mark = "✓" if has_key else "✗"
+            print(
+                f"{name:<12} {mark} {provider.type}: ${provider.api_key_env} "
+                f"{'is set' if has_key else 'is not set'}"
+            )
+        else:
+            print(f"{name:<12} ✓ {provider.type}")
+    if args.live:
+        print()
+        for (prov, model), role in used.items():
+            ok = asyncio.run(_live_check(project, role, f"{prov}:{model}")) and ok
+    return 0 if ok else 1
+
+
+async def _live_check(project: Project, role: str, label: str) -> bool:
+    """Run a tiny real agent: it must use a harness tool and then finish correctly."""
+    from pydantic import BaseModel
+
+    from harness.agents.runners import runner_for_role
+    from harness.tools.base import Tool, Toolbox
+
+    class AddIn(BaseModel):
+        a: int
+        b: int
+
+    class Answer(BaseModel):
+        answer: int
+
+    async def add(x: AddIn) -> str:
+        return str(x.a + x.b)
+
+    async def check(res: Answer) -> str | None:
+        return None if res.answer == 1234 + 4321 else "wrong answer: use the add tool"
+
+    run = await runner_for_role(project.config, role).run(
+        system="You are a health check for an agent harness. Use only the tools given.",
+        prompt="Use the add tool to add 1234 and 4321, then call finish with the result.",
+        toolbox=Toolbox([Tool("add", "Add two integers.", AddIn, add)]),
+        result_model=Answer,
+        finish_description="Submit the sum.",
+        on_finish=check,
+        max_turns=6,
+        cwd=project.root,
+    )
+    used_tool = any(getattr(b, "name", "") == "add" for m in run.messages for b in m.content)
+    good = run.outcome == "finished" and used_tool
+    cost = f", ${run.cost_usd:.4f}" if run.cost_usd is not None else ""
+    print(
+        f"live {label:<30} {'✓' if good else '✗'} {run.outcome} in {run.turns} tool calls"
+        f"{cost}{'' if good else ': ' + (run.reason or 'did not use the tool')}"
+    )
+    return good
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness", description=__doc__)
     parser.add_argument("-C", "--project", default=".", help="project directory (default: .)")
@@ -390,6 +498,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("learn", help="learn from new feedback and findings now")
     p.set_defaults(func=_cmd_learn)
+
+    p = sub.add_parser("doctor", help="check each role's model backend (CLI or API)")
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="also run a tiny real task on each backend (uses your model quota)",
+    )
+    p.set_defaults(func=_cmd_doctor)
 
     p = sub.add_parser("usage", help="token usage and cost by role and ticket")
     p.set_defaults(func=_cmd_usage)

@@ -12,7 +12,8 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Generic, Literal, TypeVar
+from pathlib import Path
+from typing import Generic, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -57,6 +58,7 @@ class AgentRun(Generic[R]):
     turns: int = 0
     usage: Usage = field(default_factory=Usage)
     messages: list[Message] = field(default_factory=list)
+    cost_usd: float | None = None  # reported by the backend (CLI runners); else priced later
 
 
 OnFinish = Callable[[R], Awaitable[str | None]]
@@ -181,3 +183,57 @@ def _results_or_text(uses: list, note: str) -> Message:  # type: ignore[type-arg
     if uses:
         return Message(role="user", content=[_err(u.id, note) for u in uses])
     return Message(role="user", content=[TextBlock(text=note)])
+
+
+class AgentRunner(Protocol):
+    """Runs one agent to completion: our own tool loop over a model API, or a coding-agent
+    CLI (Claude Code, OpenCode) driving the same tools through an MCP bridge."""
+
+    async def run(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        toolbox: Toolbox,
+        result_model: type[R],
+        finish_description: str,
+        on_finish: OnFinish[R],
+        max_turns: int = 80,
+        cwd: Path | None = None,
+    ) -> AgentRun[R]: ...
+
+
+class ApiRunner:
+    """The built-in tool loop (`run_agent`) over a provider-neutral ModelClient."""
+
+    def __init__(
+        self, client: ModelClient, *, max_tokens: int = 32_000, retry: RetryPolicy | None = None
+    ) -> None:
+        self.client = client
+        self.max_tokens = max_tokens
+        self.retry = retry
+
+    async def run(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        toolbox: Toolbox,
+        result_model: type[R],
+        finish_description: str,
+        on_finish: OnFinish[R],
+        max_turns: int = 80,
+        cwd: Path | None = None,
+    ) -> AgentRun[R]:
+        return await run_agent(
+            self.client,
+            system=system,
+            prompt=prompt,
+            toolbox=toolbox,
+            result_model=result_model,
+            finish_description=finish_description,
+            on_finish=on_finish,
+            max_turns=max_turns,
+            max_tokens=self.max_tokens,
+            retry=self.retry,
+        )

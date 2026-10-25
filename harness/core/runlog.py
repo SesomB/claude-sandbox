@@ -34,4 +34,5 @@ def log_agent_run(
         reason=run.reason,
         turns=run.turns,
         usage=run.usage.model_dump(),
+        cost_usd=run.cost_usd,
     )

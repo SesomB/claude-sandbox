@@ -11,12 +11,14 @@ import itertools
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypeVar
 
 import yaml
 from pydantic import BaseModel
 
-from harness.agents.loop import AgentRun, RetryPolicy, run_agent
+from harness.agents.loop import AgentRun, AgentRunner, RetryPolicy
+from harness.agents.runners import runner_for_role
 from harness.board import Ticket
 from harness.context.builder import ARCHITECTURE_PATH, CONVENTIONS_PATH, SPEC_PATH
 from harness.core.merge import MergeQueue
@@ -26,7 +28,7 @@ from harness.executors.local import LocalExecutor
 from harness.executors.worktree import Worktree, changed_files, commit_paths
 from harness.gates.checks import GateReport, build_and_test
 from harness.learning.learner import Learner
-from harness.models import ModelClient, client_for_role
+from harness.models import ModelClient
 from harness.phases.roles import (
     ARCHITECT_SYSTEM,
     DECOMPOSER_SYSTEM,
@@ -77,6 +79,7 @@ class Pipeline:
         human: Human,
         *,
         client_factory: Callable[[str], ModelClient] | None = None,
+        runner_factory: Callable[[str], AgentRunner] | None = None,
         retry: RetryPolicy | None = None,
         max_rounds: int = 3,
         max_approvals: int = 5,
@@ -84,12 +87,16 @@ class Pipeline:
         self.project = project
         self.board = project.board
         self.human = human
-        self.client_factory = client_factory or (lambda role: client_for_role(project.config, role))
+        self.runner_factory = runner_factory or (
+            lambda role: runner_for_role(
+                project.config, role, client_factory=client_factory, retry=retry
+            )
+        )
         self.retry = retry
         self.max_rounds = max_rounds
         self.max_approvals = max_approvals
         self._ids = itertools.count(1)
-        self.learner = Learner(project, client_factory=self.client_factory, retry=retry)
+        self.learner = Learner(project, runner_factory=self.runner_factory)
 
     # -- phase state ----------------------------------------------------------------------
 
@@ -124,6 +131,7 @@ class Pipeline:
         result_model: type[R],
         finish: str,
         on_finish: Callable[[R], Awaitable[str | None]] | None = None,
+        cwd: Path | None = None,
     ) -> AgentRun[R]:
         async def accept(_: R) -> str | None:
             return None
@@ -133,8 +141,7 @@ class Pipeline:
             prompt += "\n\n# Lessons (rules learned on this project; follow them)\n" + "\n".join(
                 f"- {x}" for x in lessons
             )
-        run = await run_agent(
-            self.client_factory(role),
+        run = await self.runner_factory(role).run(
             system=system + self.learner.skills_for(role),
             prompt=prompt,
             toolbox=Toolbox(tools),
@@ -142,8 +149,7 @@ class Pipeline:
             finish_description=finish,
             on_finish=on_finish or accept,
             max_turns=self.project.config.orchestrator.agent_max_turns,
-            max_tokens=self.project.config.model_for(role).max_tokens,
-            retry=self.retry,
+            cwd=cwd,
         )
         log_agent_run(
             self.project,
@@ -204,6 +210,7 @@ class Pipeline:
                 writer = await self._agent(
                     "spec_writer",
                     key="phase-spec",
+                    cwd=wt.path,
                     system=SPEC_WRITER_SYSTEM,
                     prompt=prompt,
                     tools=[*files, ask],
@@ -217,6 +224,7 @@ class Pipeline:
                 critic = await self._agent(
                     "spec_critic",
                     key="phase-spec",
+                    cwd=wt.path,
                     system=SPEC_CRITIC_SYSTEM,
                     prompt=f"Review this spec:\n\n{ex.read_text(SPEC_PATH)}",
                     tools=self._read_tools(files),
@@ -287,6 +295,7 @@ class Pipeline:
             run = await self._agent(
                 "architect",
                 key="phase-architecture",
+                cwd=wt.path,
                 system=ARCHITECT_SYSTEM,
                 prompt=prompt,
                 tools=tools,
@@ -373,6 +382,7 @@ class Pipeline:
                 run = await self._agent(
                     "decomposer",
                     key="phase-plan",
+                    cwd=root,
                     system=DECOMPOSER_SYSTEM,
                     prompt=prompt,
                     tools=read_tools,
@@ -386,6 +396,7 @@ class Pipeline:
                 critic = await self._agent(
                     "plan_critic",
                     key="phase-plan",
+                    cwd=root,
                     system=PLAN_CRITIC_SYSTEM,
                     prompt=f"{docs}\n\n# Proposed tickets\n{_plan_yaml(plan)}",
                     tools=read_tools,

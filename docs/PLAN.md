@@ -27,7 +27,7 @@ escalated, and every escalation arrives as a ready-to-decide set of options.
 |-----------|-------------------------------------------------------|
 | Engine language | Python 3.12+, asyncio                           |
 | Generated apps | **Any language** via pluggable Stack Profiles (§11); Python and C++ first |
-| Models    | Provider-agnostic `ModelClient`; provider and model per role set in config (§12) |
+| Models    | Per role in config: a coding-agent CLI (Claude Code, OpenCode) driving the harness's tools via MCP, or a model API through `ModelClient` (§12) |
 | Process   | Waterfall phases with gates, ticket-based execution   |
 | Execution | Runs on your machine with your installed toolchains; per-ticket git worktree |
 | Repos     | Each generated application has its own git repository |

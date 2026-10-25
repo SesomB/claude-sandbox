@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from harness.agents.loop import AgentAbort, AgentRun, RetryPolicy, run_agent
+from harness.agents.loop import AgentAbort, AgentRun, AgentRunner, RetryPolicy
 from harness.agents.roles import (
     FINISH_DESCRIPTIONS,
     FIXER_SYSTEM,
@@ -25,6 +25,7 @@ from harness.agents.roles import (
     ImplementerResult,
     ReviewResult,
 )
+from harness.agents.runners import runner_for_role
 from harness.board import BoardError, NotHolder, Ticket, TicketStatus
 from harness.board.models import TERMINAL_STATUSES
 from harness.context.builder import (
@@ -47,7 +48,7 @@ from harness.executors.worktree import git
 from harness.gates.checks import GateReport, build_and_test, format_files, run_gates
 from harness.gates.tdd import TddTracker, tdd_tools
 from harness.learning.learner import Learner
-from harness.models import ModelClient, client_for_role
+from harness.models import ModelClient
 from harness.phases.tools import phase_file_tools
 from harness.project import Project
 from harness.tools.base import Toolbox
@@ -81,6 +82,7 @@ class Orchestrator:
         project: Project,
         *,
         client_factory: ClientFactory | None = None,
+        runner_factory: Callable[[str], AgentRunner] | None = None,
         hooks: HookRegistry | None = None,
         retry: RetryPolicy | None = None,
         lessons: LessonsProvider | None = None,
@@ -89,10 +91,15 @@ class Orchestrator:
         self.project = project
         self.board = project.board
         self.cfg = project.config.orchestrator
-        self.client_factory = client_factory or (lambda role: client_for_role(project.config, role))
+        self.client_factory = client_factory
+        self.runner_factory = runner_factory or (
+            lambda role: runner_for_role(
+                project.config, role, client_factory=client_factory, retry=retry
+            )
+        )
         self.hooks = hooks or default_hooks()
         self.retry = retry
-        self.learner = Learner(project, client_factory=self.client_factory, retry=retry)
+        self.learner = Learner(project, runner_factory=self.runner_factory)
         self.lessons = lessons or self.learner.lessons_for
         self.poll_interval_s = poll_interval_s
         self.stacks = project.stacks()
@@ -284,8 +291,8 @@ class Orchestrator:
             + (report.summary())
         )
 
-    def _client(self, role: str) -> tuple[ModelClient, int]:
-        return self.client_factory(role), self.project.config.model_for(role).max_tokens
+    def _runner(self, role: str) -> AgentRunner:
+        return self.runner_factory(role)
 
     # -- workers ------------------------------------------------------------------------------
 
@@ -316,9 +323,7 @@ class Orchestrator:
             async def on_finish(_: ImplementerResult) -> str | None:
                 return await self._gates_on_finish(ws, "implementer", attempts)
 
-            client, max_tokens = self._client("implementer")
-            run = await run_agent(
-                client,
+            run = await self._runner("implementer").run(
                 system=IMPLEMENTER_SYSTEM + self.learner.skills_for("implementer"),
                 prompt=prompt,
                 toolbox=Toolbox([*read_tools(ws), *write_tools(ws)]),
@@ -326,8 +331,7 @@ class Orchestrator:
                 finish_description=FINISH_DESCRIPTIONS["implementer"],
                 on_finish=on_finish,
                 max_turns=self.cfg.agent_max_turns,
-                max_tokens=max_tokens,
-                retry=self.retry,
+                cwd=ws.root,
             )
             self._log_run(ticket_id, "implementer", agent, run)
             if run.outcome != "finished" or run.result is None:
@@ -371,9 +375,7 @@ class Orchestrator:
             async def on_finish(_: ReviewResult) -> str | None:
                 return None
 
-            client, max_tokens = self._client("reviewer")
-            run = await run_agent(
-                client,
+            run = await self._runner("reviewer").run(
                 system=REVIEWER_SYSTEM + self.learner.skills_for("reviewer"),
                 prompt=prompt,
                 toolbox=Toolbox(read_tools(ws)),
@@ -381,8 +383,7 @@ class Orchestrator:
                 finish_description=FINISH_DESCRIPTIONS["reviewer"],
                 on_finish=on_finish,
                 max_turns=self.cfg.agent_max_turns,
-                max_tokens=max_tokens,
-                retry=self.retry,
+                cwd=ws.root,
             )
             self._log_run(ticket_id, "reviewer", agent, run)
             if run.outcome != "finished" or run.result is None:
@@ -477,9 +478,7 @@ class Orchestrator:
                     )
                 return await self._gates_on_finish(ws, "fixer", attempts)
 
-            client, max_tokens = self._client("fixer")
-            run = await run_agent(
-                client,
+            run = await self._runner("fixer").run(
                 system=FIXER_SYSTEM + self.learner.skills_for("fixer"),
                 prompt=prompt,
                 toolbox=Toolbox([*read_tools(ws), *write_tools(ws), *tdd_tools(tracker)]),
@@ -487,8 +486,7 @@ class Orchestrator:
                 finish_description=FINISH_DESCRIPTIONS["fixer"],
                 on_finish=on_finish,
                 max_turns=self.cfg.agent_max_turns,
-                max_tokens=max_tokens,
-                retry=self.retry,
+                cwd=ws.root,
             )
             self._log_run(ticket_id, "fixer", agent, run)
             if run.outcome != "finished" or run.result is None:
@@ -556,9 +554,7 @@ class Orchestrator:
 
         request: DecisionRequest
         try:
-            client, max_tokens = self._client("researcher")
-            run = await run_agent(
-                client,
+            run = await self._runner("researcher").run(
                 system=RESEARCHER_SYSTEM + self.learner.skills_for("researcher"),
                 prompt=evidence,
                 toolbox=Toolbox(tools),
@@ -566,8 +562,7 @@ class Orchestrator:
                 finish_description="Submit the decision for the owner.",
                 on_finish=has_actions,
                 max_turns=self.cfg.agent_max_turns,
-                max_tokens=max_tokens,
-                retry=self.retry,
+                cwd=root,
             )
             self._log_run(ticket_id, "researcher", self._agent_name("researcher"), run)
             request = run.result if run.result is not None else fallback_request(ticket, reason)

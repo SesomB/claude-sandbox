@@ -84,6 +84,31 @@ Profiles (`python`, `cpp-cmake`), CLI.
 - Manage everything on the dashboard (add, edit, promote, retire, restore) or with
   `harness lessons`, `harness lesson add|edit|retire|restore|promote`, `harness learn`
 
+**Agent backends: Claude Code and OpenCode** (done):
+
+Agents can run on a coding-agent CLI instead of a raw model API, using its own login
+(e.g. your Claude subscription). The CLI's built-in tools are disabled; it works only
+through the harness's scoped tools, which a local MCP bridge (127.0.0.1, random port and
+path token) serves to it for each agent run. File scoping, gates and red→green
+enforcement therefore still apply. Each role can use a different backend:
+
+```yaml
+providers:
+  claude_code: {type: claude_code}          # `claude -p`, your Claude Code login
+  opencode:    {type: opencode}             # `opencode run`, any model OpenCode supports
+  anthropic:   {type: anthropic, api_key_env: ANTHROPIC_API_KEY}
+models:
+  default: {provider: claude_code, model: opus}
+  roles:
+    implementer: {provider: claude_code, model: sonnet}
+    reviewer:    {provider: opencode, model: anthropic/claude-opus-5-5}
+```
+
+Optional provider keys: `command`, `extra_args`, `env`, `timeout_s` (3600), `nudges` (2: if
+the CLI stops without calling `finish`, the harness resumes its session and asks again).
+Token usage and the cost the CLI reports are recorded per run. `harness doctor` checks
+every role's backend; `harness doctor --live` runs a tiny real task on each.
+
 Next: **M5 – hardening** (integration/QA phase, more providers, Docker executor, new-language
 toolchain agent) and a first real run with your API key.
 

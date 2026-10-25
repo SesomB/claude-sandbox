@@ -22,7 +22,8 @@ def test_init_new_directory(tmp_path: Path) -> None:
     assert (app / ".harness" / "config.yaml").is_file()
     assert run_git(app, "log", "--oneline").count("\n") == 1
     assert run_git(app, "branch", "--show-current").strip() == "main"
-    assert project.config.model_for("implementer").model == "claude-sonnet-5-5"
+    assert project.config.model_for("implementer").model == "sonnet"
+    assert project.config.provider_for("implementer").type == "claude_code"
     # Board state is not committed.
     assert "board.db" not in run_git(app, "status", "--porcelain")
     # Worktrees work right away because there is a base commit.

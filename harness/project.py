@@ -17,17 +17,19 @@ DEFAULT_CONFIG = """\
 # Harness project config. Personal defaults can live in ~/.config/harness/config.yaml;
 # values here override them. Never put API keys here, only env var names.
 
+# Who runs the agents. A coding-agent CLI uses its own login (e.g. your Claude
+# subscription) and works only through the harness's tools; an API provider needs a key.
 providers:
-  anthropic: {type: anthropic, api_key_env: ANTHROPIC_API_KEY}
-  # openai: {type: openai_compatible, base_url: https://api.openai.com/v1,
-  #          api_key_env: OPENAI_API_KEY}
-  # local:  {type: openai_compatible, base_url: http://localhost:11434/v1}
+  claude_code: {type: claude_code}      # Claude Code CLI (`claude`), your existing login
+  # opencode:  {type: opencode}         # OpenCode CLI; models as provider/model
+  # anthropic: {type: anthropic, api_key_env: ANTHROPIC_API_KEY}   # direct API
 
 models:
-  default: {provider: anthropic, model: claude-opus-5-5}
+  default: {provider: claude_code, model: opus}
   roles:
-    implementer: {provider: anthropic, model: claude-sonnet-5-5}
-    fixer:       {provider: anthropic, model: claude-sonnet-5-5}
+    implementer: {provider: claude_code, model: sonnet}
+    fixer:       {provider: claude_code, model: sonnet}
+    # reviewer:  {provider: opencode, model: anthropic/claude-opus-5-5}
 
 context_budget_tokens:
   implementer: 12000

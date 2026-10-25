@@ -74,7 +74,8 @@ def usage_report(board: Board, config: HarnessConfig) -> UsageReport:
                 continue
             usage = e.payload.get("usage") or {}
             model = str(e.payload.get("model") or "")
-            cost = run_cost(config, model, usage)
+            reported = e.payload.get("cost_usd")  # e.g. from Claude Code / OpenCode
+            cost = float(reported) if reported is not None else run_cost(config, model, usage)
             for line in (
                 report.total,
                 report.by_role[str(e.payload.get("role", "?"))],

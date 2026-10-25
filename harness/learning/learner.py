@@ -26,12 +26,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from harness.agents.loop import RetryPolicy, run_agent
+from harness.agents.loop import AgentRunner, RetryPolicy
+from harness.agents.runners import runner_for_role
 from harness.board import Event, Ticket
 from harness.context.builder import SPEC_PATH, estimate_tokens
 from harness.core.runlog import log_agent_run
 from harness.escalation.decisions import DecisionRequest, Option
-from harness.models import ModelClient, client_for_role
+from harness.models import ModelClient
 from harness.project import Project
 from harness.stacks.profile import match_glob
 from harness.tools.base import Toolbox
@@ -152,11 +153,15 @@ class Learner:
         *,
         client_factory: Callable[[str], ModelClient] | None = None,
         retry: RetryPolicy | None = None,
+        runner_factory: Callable[[str], AgentRunner] | None = None,
     ) -> None:
         self.project = project
         self.board = project.board
-        self.client_factory = client_factory or (lambda role: client_for_role(project.config, role))
-        self.retry = retry
+        self.runner_factory = runner_factory or (
+            lambda role: runner_for_role(
+                project.config, role, client_factory=client_factory, retry=retry
+            )
+        )
         self._lock = asyncio.Lock()
 
     # -- reading the event log ----------------------------------------------------------------
@@ -304,8 +309,7 @@ class Learner:
 
         result: LibrarianResult | None = None
         try:
-            run = await run_agent(
-                self.client_factory("librarian"),
+            run = await self.runner_factory("librarian").run(
                 system=LIBRARIAN_SYSTEM,
                 prompt=prompt,
                 toolbox=Toolbox(),
@@ -313,8 +317,7 @@ class Learner:
                 finish_description="Submit your changes to the lessons (possibly none).",
                 on_finish=check,
                 max_turns=6,
-                max_tokens=self.project.config.model_for("librarian").max_tokens,
-                retry=self.retry,
+                cwd=self.project.root,
             )
             log_agent_run(
                 self.project,
