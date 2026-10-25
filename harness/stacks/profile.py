@@ -89,6 +89,9 @@ class StackProfile(BaseModel):
     test_failed_exit_codes: list[int] = Field(default_factory=list)
     conventions: str | None = None
     env: dict[str, str] = Field(default_factory=dict)  # extra env for every step
+    # Regex whose first group is a linter rule id in `lint` output (e.g. ruff's E501);
+    # the same rule failing on several tickets becomes a lesson.
+    lint_code_pattern: str | None = None
 
     def command(
         self, step: Step, *, files: list[str] | None = None, test_id: str | None = None

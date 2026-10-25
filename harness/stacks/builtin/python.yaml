@@ -17,3 +17,4 @@ artifact_globs: ["**/__pycache__/**", "**/*.pyc", .pytest_cache/**, .mypy_cache/
 test_failed_exit_codes: [1]  # pytest: 1 = tests failed; 2-5 = errors / nothing collected
 # Agents rewrite files within the same second; stale .pyc files would hide their changes.
 env: {PYTHONDONTWRITEBYTECODE: "1"}
+lint_code_pattern: '\b([A-Z]{1,4}[0-9]{3,4})\b'

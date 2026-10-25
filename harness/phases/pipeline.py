@@ -25,6 +25,7 @@ from harness.escalation.decisions import Human, ask_user_tool, request_approval
 from harness.executors.local import LocalExecutor
 from harness.executors.worktree import Worktree, changed_files, commit_paths
 from harness.gates.checks import GateReport, build_and_test
+from harness.learning.learner import Learner
 from harness.models import ModelClient, client_for_role
 from harness.phases.roles import (
     ARCHITECT_SYSTEM,
@@ -88,6 +89,7 @@ class Pipeline:
         self.max_rounds = max_rounds
         self.max_approvals = max_approvals
         self._ids = itertools.count(1)
+        self.learner = Learner(project, client_factory=self.client_factory, retry=retry)
 
     # -- phase state ----------------------------------------------------------------------
 
@@ -126,9 +128,14 @@ class Pipeline:
         async def accept(_: R) -> str | None:
             return None
 
+        lessons = self.learner.lessons_for(None, role)
+        if lessons:
+            prompt += "\n\n# Lessons (rules learned on this project; follow them)\n" + "\n".join(
+                f"- {x}" for x in lessons
+            )
         run = await run_agent(
             self.client_factory(role),
-            system=system,
+            system=system + self.learner.skills_for(role),
             prompt=prompt,
             toolbox=Toolbox(tools),
             result_model=result_model,
@@ -230,6 +237,7 @@ class Pipeline:
                 self._set_phase("architecture")
                 return PhaseResult(True, "spec approved and committed to main")
             feedback = approval.feedback
+            await self.learner.sync()  # the owner's feedback becomes lessons right away
         return PhaseResult(False, "spec not approved")
 
     # -- phase 2: architecture -----------------------------------------------------------------
@@ -308,6 +316,7 @@ class Pipeline:
                 self._set_phase("plan")
                 return PhaseResult(True, f"architecture approved; stacks: {stack_names}")
             feedback = approval.feedback
+            await self.learner.sync()  # the owner's feedback becomes lessons right away
         return PhaseResult(False, "architecture not approved")
 
     # -- phase 3: plan (decomposition into tickets) ----------------------------------------------
@@ -404,6 +413,7 @@ class Pipeline:
                 self._set_phase("build")
                 return PhaseResult(True, f"{len(plan.tickets)} tickets queued")
             feedback = approval.feedback
+            await self.learner.sync()  # the owner's feedback becomes lessons right away
         return PhaseResult(False, "plan not approved")
 
 

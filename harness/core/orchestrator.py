@@ -46,6 +46,7 @@ from harness.executors.local import LocalExecutor
 from harness.executors.worktree import git
 from harness.gates.checks import GateReport, build_and_test, format_files, run_gates
 from harness.gates.tdd import TddTracker, tdd_tools
+from harness.learning.learner import Learner
 from harness.models import ModelClient, client_for_role
 from harness.phases.tools import phase_file_tools
 from harness.project import Project
@@ -91,7 +92,8 @@ class Orchestrator:
         self.client_factory = client_factory or (lambda role: client_for_role(project.config, role))
         self.hooks = hooks or default_hooks()
         self.retry = retry
-        self.lessons = lessons or (lambda ticket, role: [])
+        self.learner = Learner(project, client_factory=self.client_factory, retry=retry)
+        self.lessons = lessons or self.learner.lessons_for
         self.poll_interval_s = poll_interval_s
         self.stacks = project.stacks()
         self.merge_queue = MergeQueue(project.root, self.board, self.stacks, project.worktrees)
@@ -128,6 +130,7 @@ class Orchestrator:
             for task in self._tasks.values():
                 task.cancel()
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        await self.learner.sync()  # learn from whatever happened last
         counts: dict[str, int] = {}
         for t in self.board.tickets():
             counts[t.status.value] = counts.get(t.status.value, 0) + 1
@@ -175,6 +178,7 @@ class Orchestrator:
             "fixer": self.fix,
             "merger": self.merge,
             "researcher": self.research,
+            "librarian": self.learn,
         }[role]
         sem = self._sem or contextlib.nullcontext()
         async with sem:
@@ -315,7 +319,7 @@ class Orchestrator:
             client, max_tokens = self._client("implementer")
             run = await run_agent(
                 client,
-                system=IMPLEMENTER_SYSTEM,
+                system=IMPLEMENTER_SYSTEM + self.learner.skills_for("implementer"),
                 prompt=prompt,
                 toolbox=Toolbox([*read_tools(ws), *write_tools(ws)]),
                 result_model=ImplementerResult,
@@ -370,7 +374,7 @@ class Orchestrator:
             client, max_tokens = self._client("reviewer")
             run = await run_agent(
                 client,
-                system=REVIEWER_SYSTEM,
+                system=REVIEWER_SYSTEM + self.learner.skills_for("reviewer"),
                 prompt=prompt,
                 toolbox=Toolbox(read_tools(ws)),
                 result_model=ReviewResult,
@@ -476,7 +480,7 @@ class Orchestrator:
             client, max_tokens = self._client("fixer")
             run = await run_agent(
                 client,
-                system=FIXER_SYSTEM,
+                system=FIXER_SYSTEM + self.learner.skills_for("fixer"),
                 prompt=prompt,
                 toolbox=Toolbox([*read_tools(ws), *write_tools(ws), *tdd_tools(tracker)]),
                 result_model=FixerResult,
@@ -555,7 +559,7 @@ class Orchestrator:
             client, max_tokens = self._client("researcher")
             run = await run_agent(
                 client,
-                system=RESEARCHER_SYSTEM,
+                system=RESEARCHER_SYSTEM + self.learner.skills_for("researcher"),
                 prompt=evidence,
                 toolbox=Toolbox(tools),
                 result_model=DecisionRequest,
@@ -572,3 +576,8 @@ class Orchestrator:
             request = fallback_request(ticket, reason)
         if self.board.get(ticket_id).status is S.ESCALATED:
             self.board.create_decision(request.model_dump(), ticket_id=ticket_id)
+
+    async def learn(self, _: str) -> None:
+        """Run the learner until it has caught up with the event log."""
+        while await self.learner.sync():
+            pass

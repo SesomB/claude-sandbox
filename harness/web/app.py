@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -24,6 +24,7 @@ from harness.board import BoardError, TicketStatus
 from harness.context.builder import ARCHITECTURE_PATH, CONVENTIONS_PATH, SPEC_PATH
 from harness.core.usage import usage_report
 from harness.escalation.decisions import Decision, DecisionRequest
+from harness.learning.learner import validate_scope
 from harness.project import Project
 
 STATIC = Path(__file__).parent / "static"
@@ -39,6 +40,18 @@ GATE_DOCUMENTS = {
 class DecisionAnswer(BaseModel):
     choice: str | None = None
     note: str = ""
+
+
+class LessonCreate(BaseModel):
+    rule: str
+    scope: str = "global"
+
+
+class LessonUpdate(BaseModel):
+    rule: str | None = None
+    scope: str | None = None
+    status: Literal["active", "promoted", "retired"] | None = None
+    priority: Literal["high", "normal"] | None = None
 
 
 class ApprovalAnswer(BaseModel):
@@ -87,6 +100,7 @@ def create_app(project: Project) -> FastAPI:
             "approvals_open": board.approvals(open_only=True),
             "usage": usage_report(board, project.config).as_dict(),
             "has_events": bool(events),
+            "lessons": board.lessons(),
         }
 
     @app.get("/api/events")
@@ -156,6 +170,34 @@ def create_app(project: Project) -> FastAPI:
             for rel in GATE_DOCUMENTS.get(gate, [])
             if (base / rel).is_file()
         }
+
+    @app.post("/api/lessons")
+    def add_lesson(body: LessonCreate) -> dict[str, Any]:
+        if not body.rule.strip():
+            raise HTTPException(400, "write the rule")
+        try:
+            scope = validate_scope(body.scope)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        lesson_id = board.add_lesson(
+            body.rule.strip(), scope=scope, source="owner", priority="high"
+        )
+        return board.get_lesson(lesson_id)
+
+    @app.post("/api/lessons/{lesson_id}")
+    def update_lesson(lesson_id: str, body: LessonUpdate) -> dict[str, Any]:
+        fields = body.model_dump(exclude_none=True)
+        if "rule" in fields and not fields["rule"].strip():
+            raise HTTPException(400, "the rule can't be empty")
+        try:
+            if "scope" in fields:
+                fields["scope"] = validate_scope(fields["scope"])
+            board.update_lesson(_safe(lesson_id), why="edited by the owner", **fields)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except BoardError as e:
+            raise HTTPException(404, str(e)) from e
+        return board.get_lesson(lesson_id)
 
     @app.get("/api/documents")
     def documents() -> dict[str, str]:

@@ -76,6 +76,20 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at  REAL NOT NULL,
     answered_at REAL
 );
+CREATE TABLE IF NOT EXISTS lessons (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         TEXT NOT NULL UNIQUE,
+    rule       TEXT NOT NULL,
+    scope      TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    priority   TEXT NOT NULL,
+    hits       INTEGER NOT NULL DEFAULT 1,
+    uses       INTEGER NOT NULL DEFAULT 0,
+    examples   TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -539,6 +553,110 @@ class Board:
         if row is None:
             raise BoardError(f"unknown approval {approval_id!r}")
         return self._approval_row(row)
+
+    # -- lessons --------------------------------------------------------------------------
+
+    LESSON_FIELDS = ("rule", "scope", "source", "status", "priority", "hits", "uses", "examples")
+
+    def add_lesson(
+        self,
+        rule: str,
+        *,
+        scope: str,
+        source: str,
+        status: str = "active",
+        priority: str = "normal",
+        examples: list[str] | None = None,
+    ) -> str:
+        now = self._clock()
+        with self._tx() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM lessons").fetchone()[0] + 1
+            lesson_id = f"L-{n}"
+            conn.execute(
+                "INSERT INTO lessons (id, rule, scope, source, status, priority, examples, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    lesson_id,
+                    rule,
+                    scope,
+                    source,
+                    status,
+                    priority,
+                    json.dumps(examples or []),
+                    now,
+                    now,
+                ),
+            )
+            self._emit(
+                conn,
+                None,
+                "lesson.added",
+                lesson=lesson_id,
+                rule=rule,
+                scope=scope,
+                source=source,
+                status=status,
+            )
+            return lesson_id
+
+    def update_lesson(self, lesson_id: str, *, why: str = "", **fields: Any) -> None:
+        unknown = set(fields) - set(self.LESSON_FIELDS)
+        if unknown:
+            raise BoardError(f"unknown lesson fields {sorted(unknown)}")
+        if "examples" in fields:
+            fields["examples"] = json.dumps(fields["examples"])
+        with self._tx() as conn:
+            if conn.execute("SELECT 1 FROM lessons WHERE id=?", (lesson_id,)).fetchone() is None:
+                raise BoardError(f"unknown lesson {lesson_id!r}")
+            sets = ", ".join(f"{k}=?" for k in fields)
+            conn.execute(
+                f"UPDATE lessons SET {sets}, updated_at=? WHERE id=?",
+                (*fields.values(), self._clock(), lesson_id),
+            )
+            changes = {k: v for k, v in fields.items() if k not in ("uses", "examples")}
+            if changes:
+                self._emit(conn, None, "lesson.updated", lesson=lesson_id, why=why, **changes)
+
+    def bump_lessons(self, lesson_ids: list[str], field: str) -> None:
+        """Increment ``uses`` or ``hits`` (no event: this happens on every agent run)."""
+        if field not in ("uses", "hits") or not lesson_ids:
+            return
+        with self._tx() as conn:
+            conn.executemany(
+                f"UPDATE lessons SET {field} = {field} + 1 WHERE id=?",
+                [(i,) for i in lesson_ids],
+            )
+
+    def lessons(self, *, statuses: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM lessons"
+        params: tuple[str, ...] = ()
+        if statuses:
+            query += f" WHERE status IN ({','.join('?' * len(statuses))})"
+            params = statuses
+        with closing(self._connect()) as conn:
+            rows = conn.execute(query + " ORDER BY seq", params).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "rule": r["rule"],
+                "scope": r["scope"],
+                "source": r["source"],
+                "status": r["status"],
+                "priority": r["priority"],
+                "hits": r["hits"],
+                "uses": r["uses"],
+                "examples": json.loads(r["examples"]),
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    def get_lesson(self, lesson_id: str) -> dict[str, Any]:
+        for lesson in self.lessons():
+            if lesson["id"] == lesson_id:
+                return lesson
+        raise BoardError(f"unknown lesson {lesson_id!r}")
 
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         with closing(self._connect()) as conn:

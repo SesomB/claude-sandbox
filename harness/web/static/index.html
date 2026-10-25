@@ -99,6 +99,17 @@
   .msg .role { font-size: 11px; color: var(--muted); text-transform: uppercase; }
   .err { color: var(--bad); }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .lesson { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .lesson .rule { white-space: pre-wrap; }
+  .lesson .meta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .lesson .acts { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
+  .lesson .acts button { padding: 3px 8px; font-size: 12px; }
+  .lesson.retired .rule { color: var(--muted); text-decoration: line-through; }
+  .badge.high { background: var(--warn-soft); color: var(--warn); }
+  .badge.skill { background: var(--good-soft); color: var(--good); }
+  .badge.pending { background: var(--bad-soft); color: var(--bad); }
+  input[type=text] { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); padding: 6px 8px; font: inherit; }
+  h3.group { font-size: 12px; color: var(--muted); margin: 14px 0 2px; }
 </style>
 </head>
 <body>
@@ -117,6 +128,15 @@
   <section class="panel">
     <h2>Tickets</h2>
     <div class="kanban" id="kanban"></div>
+  </section>
+  <section class="panel" id="lessons-panel">
+    <h2>Lessons &amp; skills</h2>
+    <div class="row" style="margin-top:0">
+      <input type="text" id="new-rule" placeholder="Teach the team a rule, e.g. “Never log secrets”" style="flex:1; min-width:220px">
+      <input type="text" id="new-scope" value="global" title="global | role:&lt;role&gt; | path:&lt;glob&gt; | stack:&lt;name&gt;" style="width:180px">
+      <button class="primary" id="add-rule">Add rule</button>
+    </div>
+    <div id="lessons"></div>
   </section>
   <div class="split">
     <section class="panel">
@@ -290,6 +310,65 @@ function renderUsage(s) {
        el("div", {}, d.request.question, " → ", el("b", {}, d.answer.choice || d.answer.note)))) : [el("div", {class: "empty"}, "None yet.")]));
 }
 
+const LESSON_GROUPS = [
+  ["Skills (always in the role's instructions)", ["promoted"]],
+  ["Active lessons (injected where relevant)", ["active"]],
+  ["Waiting for your decision", ["pending"]],
+  ["Retired", ["retired"]],
+];
+const editing = {};
+async function updateLesson(id, fields) {
+  try { await api(`/api/lessons/${id}`, fields); delete editing[id]; refresh(); }
+  catch (e) { alert(e.message); }
+}
+function lessonRow(x) {
+  const btn = (label, fields, cls = "") => el("button", {class: cls, onclick: () => updateLesson(x.id, fields)}, label);
+  const acts = [];
+  if (editing[x.id] !== undefined) {
+    const ta = el("textarea", {}); ta.value = editing[x.id];
+    ta.addEventListener("input", () => { editing[x.id] = ta.value; });
+    return el("div", {class: "lesson"}, ta, el("div", {class: "acts"},
+      el("button", {class: "primary", onclick: () => updateLesson(x.id, {rule: editing[x.id]})}, "Save"),
+      el("button", {onclick: () => { delete editing[x.id]; renderLessons(lastState, true); }}, "Cancel")));
+  }
+  if (x.status !== "pending") acts.push(el("button", {onclick: () => { editing[x.id] = x.rule; renderLessons(lastState, true); }}, "Edit"));
+  if (x.status === "active") acts.push(btn("Promote", {status: "promoted"}));
+  if (x.status === "promoted") acts.push(btn("Demote", {status: "active"}));
+  if (x.status === "retired") acts.push(btn("Restore", {status: "active"}));
+  else if (x.status !== "pending") acts.push(btn("Retire", {status: "retired"}, "bad"));
+  return el("div", {class: "lesson " + x.status},
+    el("div", {},
+      el("div", {class: "rule"}, x.rule),
+      el("div", {class: "meta"}, el("span", {class: "qid"}, x.id),
+        el("span", {class: "badge action"}, x.scope),
+        x.priority === "high" ? el("span", {class: "badge high"}, "from you") : null,
+        x.status === "promoted" ? el("span", {class: "badge skill"}, "skill") : null,
+        x.status === "pending" ? el("span", {class: "badge pending"}, "conflicts with spec: see Needs you") : null,
+        el("span", {}, `source ${x.source} · confirmed ${x.hits}× · used ${x.uses}×`),
+        x.examples.length ? el("span", {}, `seen in ${x.examples.join(", ")}`) : null)),
+    el("div", {class: "acts"}, acts));
+}
+let lastState = null;
+function renderLessons(s, force = false) {
+  const panel = document.getElementById("lessons-panel");
+  if (!force && panel.contains(document.activeElement) && document.activeElement.tagName === "TEXTAREA") return;
+  const groups = LESSON_GROUPS.map(([title, statuses]) => {
+    const xs = s.lessons.filter(x => statuses.includes(x.status));
+    if (!xs.length) return null;
+    const body = xs.map(lessonRow);
+    return statuses[0] === "retired"
+      ? el("details", {}, el("summary", {class: "group"}, `${title} (${xs.length})`), body)
+      : [el("h3", {class: "group"}, `${title} (${xs.length})`), ...body];
+  }).filter(Boolean);
+  document.getElementById("lessons").replaceChildren(...(groups.length ? groups.flat()
+    : [el("div", {class: "empty"}, "No lessons yet. They appear as you give feedback and as reviews find recurring problems.")]));
+}
+document.getElementById("add-rule").addEventListener("click", async () => {
+  const rule = document.getElementById("new-rule"), scope = document.getElementById("new-scope");
+  try { await api("/api/lessons", {rule: rule.value, scope: scope.value}); rule.value = ""; refresh(); }
+  catch (e) { alert(e.message); }
+});
+
 let lastSeq = 0;
 const feed = [];
 function describe(e) {
@@ -346,7 +425,8 @@ document.getElementById("dlg-close").addEventListener("click", () => document.ge
 async function refresh() {
   try {
     const s = await api("/api/state");
-    renderHeader(s); renderNeeds(s); renderKanban(s); renderUsage(s);
+    lastState = s;
+    renderHeader(s); renderNeeds(s); renderKanban(s); renderLessons(s); renderUsage(s);
     await refreshFeed();
   } catch (e) {
     document.getElementById("usage").textContent = "Disconnected: " + e.message;

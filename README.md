@@ -66,7 +66,26 @@ Profiles (`python`, `cpp-cmake`), CLI.
 - `harness usage`: tokens and cost by role and ticket (built-in Claude prices,
   overridable with `pricing:` in config)
 
-Next: **M4 – learning** (lessons from your feedback and recurring review findings).
+**M4 – Learning** (done):
+
+![Lessons and skills](docs/images/lessons.png)
+
+- `harness.learning`: lessons are short rules with a scope (`global`, `role:<role>`,
+  `path:<glob>`, `stack:<name>`), learned from the board's event log:
+  - your rejection feedback and decision notes become high-priority lessons right away
+    (a **Librarian** agent generalizes them; if it can't, your words are kept verbatim)
+  - review findings become lessons when they recur (the librarian reinforces or adds)
+  - the same lint rule failing on two or more tickets becomes a lesson mechanically
+- Each agent gets only the lessons relevant to its role and files (ranked, capped at
+  ~1.2k tokens). Lessons confirmed 3 times are promoted into **skills**: part of the
+  role's system prompt
+- The librarian merges duplicates and retires stale rules; a lesson that contradicts the
+  approved spec is held as *pending* and asked about on the Board instead of applied
+- Manage everything on the dashboard (add, edit, promote, retire, restore) or with
+  `harness lessons`, `harness lesson add|edit|retire|restore|promote`, `harness learn`
+
+Next: **M5 – hardening** (integration/QA phase, more providers, Docker executor, new-language
+toolchain agent) and a first real run with your API key.
 
 ## Development
 

@@ -47,6 +47,16 @@ ROLE_FOR_EVENT = {
 }
 
 
+# Events the learner reads; each one wakes the librarian.
+LEARNING_EVENTS = (
+    "phase.rejected",
+    "decision.answered",
+    "ticket.changes_requested",
+    "gates.failed",
+)
+LEARNING_KEY = "_learning"
+
+
 def default_hooks() -> HookRegistry:
     registry = HookRegistry()
 
@@ -66,4 +76,11 @@ def default_hooks() -> HookRegistry:
 
     registry.on("ticket.escalated")(research)
     registry.on("decision.answered")(apply_decision)
+
+    async def learn(event: Event, orch: Orchestrator) -> None:
+        if event.type == "decision.answered":
+            orch.learner.apply_conflict_decision(str(event.payload["decision"]))
+        orch.spawn("librarian", LEARNING_KEY)
+
+    registry.on(*LEARNING_EVENTS)(learn)
     return registry

@@ -240,6 +240,58 @@ def _cmd_usage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lessons(args: argparse.Namespace) -> int:
+    project = Project.open(Path(args.project))
+    statuses = None if args.all else ("promoted", "active", "pending")
+    for x in project.board.lessons(statuses=statuses):
+        flag = "!" if x["priority"] == "high" else " "
+        print(
+            f"{x['id']:<6}{flag} {x['status']:<9} {x['scope']:<22} hits={x['hits']:<3} "
+            f"uses={x['uses']:<4} {x['rule']}"
+        )
+    return 0
+
+
+def _cmd_lesson(args: argparse.Namespace) -> int:
+    from harness.learning.learner import validate_scope
+
+    board = Project.open(Path(args.project)).board
+    if args.lesson_command == "add":
+        lesson_id = board.add_lesson(
+            " ".join(args.rule),
+            scope=validate_scope(args.scope),
+            source="owner",
+            priority="high",
+        )
+        print(f"{lesson_id} added")
+    elif args.lesson_command == "edit":
+        fields: dict[str, str] = {}
+        if args.rule:
+            fields["rule"] = " ".join(args.rule)
+        if args.scope:
+            fields["scope"] = validate_scope(args.scope)
+        board.update_lesson(args.id, why="edited by the owner", **fields)
+        print(f"{args.id} updated")
+    else:
+        status = {"retire": "retired", "restore": "active", "promote": "promoted"}[
+            args.lesson_command
+        ]
+        board.update_lesson(args.id, status=status, why="changed by the owner")
+        print(f"{args.id} {status}")
+    return 0
+
+
+def _cmd_learn(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from harness.learning.learner import Learner
+
+    project = Project.open(Path(args.project))
+    n = asyncio.run(Learner(project).sync())
+    print(f"processed {n} new observations")
+    return _cmd_lessons(argparse.Namespace(project=args.project, all=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness", description=__doc__)
     parser.add_argument("-C", "--project", default=".", help="project directory (default: .)")
@@ -313,6 +365,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("--reject", metavar="FEEDBACK", help="request changes with this feedback")
     p.set_defaults(func=_cmd_approve)
+
+    p = sub.add_parser("lessons", help="list the lessons the team has learned")
+    p.add_argument("--all", action="store_true", help="include retired lessons")
+    p.set_defaults(func=_cmd_lessons)
+
+    lesson = sub.add_parser("lesson", help="add, edit, retire, restore or promote a lesson")
+    lesson_sub = lesson.add_subparsers(dest="lesson_command", required=True)
+    p = lesson_sub.add_parser("add", help="teach a rule directly")
+    p.add_argument("rule", nargs="+")
+    p.add_argument(
+        "--scope", default="global", help="global | role:<role> | path:<glob> | stack:<name>"
+    )
+    p.set_defaults(func=_cmd_lesson)
+    p = lesson_sub.add_parser("edit", help="change a lesson's rule text or scope")
+    p.add_argument("id")
+    p.add_argument("rule", nargs="*")
+    p.add_argument("--scope")
+    p.set_defaults(func=_cmd_lesson)
+    for name in ("retire", "restore", "promote"):
+        p = lesson_sub.add_parser(name)
+        p.add_argument("id")
+        p.set_defaults(func=_cmd_lesson)
+
+    p = sub.add_parser("learn", help="learn from new feedback and findings now")
+    p.set_defaults(func=_cmd_learn)
 
     p = sub.add_parser("usage", help="token usage and cost by role and ticket")
     p.set_defaults(func=_cmd_usage)

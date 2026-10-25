@@ -15,3 +15,4 @@ source_globs: ["**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.hpp", "**/*.h"]
 test_globs: ["tests/**/*.cpp", "**/*_test.cpp", "**/test_*.cpp"]
 shared_files: ["**/CMakeLists.txt", "**/*.cmake", vcpkg.json, conanfile.txt, conanfile.py]
 artifact_globs: [build/**, .cache/**]
+lint_code_pattern: '\[([a-z]+(?:-[a-z0-9]+)+(?:\.[a-z0-9-]+)*)\]'
